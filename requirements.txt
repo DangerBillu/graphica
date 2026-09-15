@@ -1,0 +1,14 @@
+mediapipe==0.10.21; sys_platform == 'darwin' and python_version < '3.13'
+mediapipe>=0.10.21; sys_platform != 'darwin' or python_version >= '3.13'
+
+numpy<2; sys_platform == 'darwin' and python_version < '3.13'
+opencv-python<5; sys_platform == 'darwin' and python_version < '3.13'
+opencv-contrib-python<5; sys_platform == 'darwin' and python_version < '3.13'
+
+opencv-python; sys_platform != 'darwin' or python_version >= '3.13'
+opencv-contrib-python; sys_platform != 'darwin' or python_version >= '3.13'
+
+protobuf>=4.25.3
+pyvirtualcam
+pillow
+

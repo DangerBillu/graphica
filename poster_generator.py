@@ -629,24 +629,64 @@ RENDERERS = {
 
 def composite_club_branding(poster):
     """
-    Composites the Graphica club logo + "GRAPHICA" text in the bottom-right corner only.
-    No Instagram QR on the meme. Preserves exact logo proportions, works on all backgrounds.
+    Composites:
+      - Bottom-Left: Instagram QR ("insta logo.jpeg") in a clean white rounded card.
+      - Bottom-Right: Graphica club logo ("g logo.jpeg") + "GRAPHICA" text.
+    Preserves exact proportions, works cleanly on all background palettes.
     """
     W, H = poster.size
     draw = ImageDraw.Draw(poster)
 
-    # Search for club logo
+    badge_h = 170
+    margin_x = 55
+    margin_y = 55
+    by = H - margin_y - badge_h
+
+    # ---------------------------------------------------------
+    # 1. BOTTOM-LEFT: INSTAGRAM QR CODE ("insta logo.jpeg")
+    # ---------------------------------------------------------
+    insta_paths = [
+        os.path.join(HERE, "insta logo.jpeg"),
+        os.path.join(HERE, "assets", "club_instagram_qr.jpeg"),
+        os.path.join(HERE, "assets", "club_instagram_qr.png"),
+    ]
+    insta_file = next((p for p in insta_paths if os.path.isfile(p)), None)
+
+    if insta_file:
+        try:
+            insta_img = Image.open(insta_file).convert("RGB")
+            iw, ih = insta_img.size
+            aspect = iw / ih
+
+            target_insta_h = 145
+            target_insta_w = int(target_insta_h * aspect)
+            insta_scaled = insta_img.resize((target_insta_w, target_insta_h), Image.Resampling.LANCZOS)
+
+            card_w = target_insta_w + 30
+            card_x = margin_x
+
+            # White card with drop shadow
+            draw.rectangle([card_x + 5, by + 5, card_x + card_w + 5, by + badge_h + 5],
+                           fill=(0, 0, 0, 140))
+            draw.rounded_rectangle([card_x, by, card_x + card_w, by + badge_h],
+                                   radius=14, fill=(255, 255, 255), outline=(0, 0, 0), width=3)
+
+            # Center QR inside the card
+            qr_x = card_x + (card_w - target_insta_w) // 2
+            qr_y = by + (badge_h - target_insta_h) // 2
+            poster.paste(insta_scaled, (qr_x, qr_y))
+        except Exception as e:
+            print(f"[BRANDING] Error loading Instagram QR: {e}")
+
+    # ---------------------------------------------------------
+    # 2. BOTTOM-RIGHT: CLUB LOGO + "GRAPHICA" ("g logo.jpeg")
+    # ---------------------------------------------------------
     logo_paths = [
         os.path.join(HERE, "assets", "club_logo.jpeg"),
         os.path.join(HERE, "g logo.jpeg"),
         os.path.join(HERE, "assets", "club_logo.png"),
     ]
     logo_file = next((p for p in logo_paths if os.path.isfile(p)), None)
-
-    badge_h = 170
-    margin_x = 55
-    margin_y = 55
-    by = H - margin_y - badge_h
 
     if logo_file:
         try:
@@ -695,14 +735,12 @@ def composite_club_branding(poster):
 
         except Exception as e:
             print(f"[BRANDING] Error loading logo: {e}")
-            # Fallback text-only badge
             badge_w = 240
             badge_x = W - margin_x - badge_w
             draw.rounded_rectangle([badge_x, by, badge_x + badge_w, by + badge_h],
                                    radius=14, fill=(255, 255, 255), outline=(0, 0, 0), width=3)
             draw.text((badge_x + 24, by + 62), "GRAPHICA", font=FONTS["impact"](42), fill=(0, 0, 0))
     else:
-        # No logo found — text-only fallback
         badge_w = 240
         badge_x = W - margin_x - badge_w
         draw.rounded_rectangle([badge_x, by, badge_x + badge_w, by + badge_h],

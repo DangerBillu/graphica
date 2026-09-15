@@ -1,4 +1,17 @@
-
-outputs/
-__pycache__/
+# Virtual Environment
 venv/
+.venv/
+env/
+
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Generated poster outputs
+outputs/
+
+# Environment variables / local config
+.env
+.DS_Store
+Thumbs.db

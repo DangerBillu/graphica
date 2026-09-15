@@ -2,85 +2,121 @@
 """
 emotion_engine.py — Reaction and emotion classification for REACTIONARY.
 
-Translates facial blendshapes, head pose, and resting calibration into
-primary emotional states, confidence scores, and graphic design style mappings.
+Continuously analyzes facial blendshapes, head pose, and resting calibration
+to classify 10 distinct emotional states in real time:
+  - Happy
+  - Sad
+  - Angry
+  - Surprised
+  - Fear
+  - Disgust
+  - Neutral
+  - Confused
+  - Excited
+  - Embarrassed
 """
 
 import json
 import os
 import numpy as np
 
-# Primary emotions supported by REACTIONARY
+# 10 Primary Emotions supported by REACTIONARY Meme Booth
 EMOTIONS = {
-    "NEUTRAL": {
-        "label": "Unimpressed",
-        "symbol": "😐",
-        "default_style": "Swiss",
-        "description": "Restrained, balanced, minimal expression",
-        "palette": ["#000000", "#FFFFFF", "#FF3B00", "#8E8E93"],
-        "typography": "Helvetica / Grotesque",
+    "HAPPY": {
+        "label": "Happy",
+        "symbol": "😄",
+        "tagline": "Joyful / Goofy / Wholesome",
+        "description": "Warm smile, relaxed forehead, pure serotonin",
+        "palette": ["#FFD700", "#FF4081", "#00E5FF", "#18181B"],
+        "default_caption": "POV: YOUR CODE COMPILES ON THE FIRST TRY",
+        "accent": "#FFD700",
     },
-    "OVERWHELMED": {
-        "label": "Overwhelmed",
-        "symbol": "😭",
-        "default_style": "Experimental",
-        "description": "Dramatic, inward-turning, intense depth",
-        "palette": ["#0D0D11", "#1F2232", "#E0E2EC", "#5A67D8"],
-        "typography": "Serif Display + Distorted Sans",
+    "SAD": {
+        "label": "Sad",
+        "symbol": "😢",
+        "tagline": "Dramatic / Depressed / Melancholic",
+        "description": "Inner brows raised, downturned mouth, existential crisis",
+        "palette": ["#1E293B", "#38BDF8", "#64748B", "#0F172A"],
+        "default_caption": "IT'S FINE. EVERYTHING IS FINE.",
+        "accent": "#38BDF8",
     },
     "ANGRY": {
-        "label": "Aggressive",
+        "label": "Angry",
         "symbol": "😡",
-        "default_style": "Brutalist",
-        "description": "High tension, sharp geometric friction",
-        "palette": ["#0A0A0A", "#FFFFFF", "#CCFF00", "#FF1A1A"],
-        "typography": "Ultra Condensed Display",
+        "tagline": "Rage / Aggressive / Chaotic",
+        "description": "Furrowed brow, flared nose, clenched jaw",
+        "palette": ["#0F0F10", "#FF1744", "#CCFF00", "#FFFFFF"],
+        "default_caption": "PEACE WAS NEVER AN OPTION",
+        "accent": "#FF1744",
     },
-    "SHOCKED": {
-        "label": "Shocked",
+    "SURPRISED": {
+        "label": "Surprised",
+        "symbol": "😲",
+        "tagline": "Shocked / Unexpected / Stunned",
+        "description": "Wide open jaw, raised brows, startled gaze",
+        "palette": ["#070B19", "#00F0FF", "#FF007A", "#FFFFFF"],
+        "default_caption": "WAIT... WHAT JUST HAPPENED?!",
+        "accent": "#00F0FF",
+    },
+    "FEAR": {
+        "label": "Fear",
+        "symbol": "😨",
+        "tagline": "Scared / Panic / Danger",
+        "description": "Wide eyes, lateral mouth stretch, pure dread",
+        "palette": ["#0A0E17", "#10B981", "#EF4444", "#E2E8F0"],
+        "default_caption": "PANIK MODE ACTIVATED",
+        "accent": "#10B981",
+    },
+    "DISGUST": {
+        "label": "Disgust",
+        "symbol": "🤢",
+        "tagline": "Disgusted / Reaction / Ick",
+        "description": "Wrinkled nose, curled upper lip, instant recoil",
+        "palette": ["#121811", "#22C55E", "#A855F7", "#F8FAFC"],
+        "default_caption": "EW BROTHER EW... WHAT'S THAT?!",
+        "accent": "#22C55E",
+    },
+    "NEUTRAL": {
+        "label": "Neutral",
+        "symbol": "😐",
+        "tagline": "Deadpan / Unimpressed / Void",
+        "description": "Flat stare, zero expression, completely unbothered",
+        "palette": ["#18181B", "#71717A", "#E4E4E7", "#FF3B00"],
+        "default_caption": "LACK OF REACTION DETECTED",
+        "accent": "#71717A",
+    },
+    "CONFUSED": {
+        "label": "Confused",
+        "symbol": "🤔",
+        "tagline": "What Is Happening / Processing",
+        "description": "Asymmetric eyebrow, head tilt, math equation vibes",
+        "palette": ["#1A162B", "#8B5CF6", "#F59E0B", "#F1F5F9"],
+        "default_caption": "WHAT IS BLUD EVEN DOING?!",
+        "accent": "#8B5CF6",
+    },
+    "EXCITED": {
+        "label": "Excited",
+        "symbol": "🤩",
+        "tagline": "Chaotic / Energetic / Hype",
+        "description": "Huge grin, wide eyes, maximum overdrive",
+        "palette": ["#1E1B4B", "#F43F5E", "#FBBF24", "#06B6D4"],
+        "default_caption": "LETS GOOOOOOOOO!",
+        "accent": "#F43F5E",
+    },
+    "EMBARRASSED": {
+        "label": "Embarrassed",
         "symbol": "😳",
-        "default_style": "Y2K",
-        "description": "Chaotic surge, wide-open perception",
-        "palette": ["#070B19", "#00F0FF", "#FF007A", "#E0E7FF"],
-        "typography": "Futuristic Extended Sans",
-    },
-    "AMUSED": {
-        "label": "Amused",
-        "symbol": "😂",
-        "default_style": "Maximalist",
-        "description": "Playful, celebratory, vibrant warmth",
-        "palette": ["#FFD600", "#FF2A85", "#00E5FF", "#18181B"],
-        "typography": "Chunky Rounded Gothic",
-    },
-    "SUSPICIOUS": {
-        "label": "Suspicious",
-        "symbol": "🤨",
-        "default_style": "Retro",
-        "description": "Asymmetrical scrutiny, investigative intrigue",
-        "palette": ["#121316", "#C9182B", "#D1D5DB", "#854D0E"],
-        "typography": "Noir Monospace & Stencil",
-    },
-    "CONFIDENT": {
-        "label": "Confident",
-        "symbol": "😎",
-        "default_style": "Editorial",
-        "description": "Composed authority, refined poise",
-        "palette": ["#111111", "#D4AF37", "#F3F4F6", "#374151"],
-        "typography": "High-Contrast Luxury Serif",
+        "tagline": "Awkward / Cringe / Blush",
+        "description": "Nervous tight grin, looking away, dying inside",
+        "palette": ["#2A1820", "#FB7185", "#F472B6", "#FFF1F2"],
+        "default_caption": "DYING OF SECONDHAND EMBARRASSMENT",
+        "accent": "#FB7185",
     },
 }
 
-ALL_STYLES = [
-    {"id": "Swiss", "name": "Swiss / International", "era": "1950s Modernism", "accent": "#FF3B00"},
-    {"id": "Brutalist", "name": "Brutalist / Aggressive", "era": "Raw Contemporary", "accent": "#CCFF00"},
-    {"id": "Y2K", "name": "Y2K / Cyber Chrome", "era": "Late 90s Cyber", "accent": "#00F0FF"},
-    {"id": "Editorial", "name": "Luxury Editorial", "era": "Haute Couture", "accent": "#D4AF37"},
-    {"id": "Maximalist", "name": "Pop / Maximalist", "era": "Playful Chaos", "accent": "#FF2A85"},
-    {"id": "Minimalist", "name": "Hyper Minimalist", "era": "Negative Space", "accent": "#FFFFFF"},
-    {"id": "Cyberpunk", "name": "Cyberpunk Telemetry", "era": "Neo-Tokyo 2077", "accent": "#00FF66"},
-    {"id": "Retro", "name": "Retro Risograph", "era": "Acid Print 70s", "accent": "#FF6B4A"},
-    {"id": "Desi Maximalism", "name": "Desi Maximalism", "era": "Folk Truck Art", "accent": "#FF9933"},
-    {"id": "Experimental", "name": "Dramatic Experimental", "era": "Avant-Garde", "accent": "#7928CA"},
+ALL_EMOTIONS_LIST = [
+    {"id": k, "label": v["label"], "symbol": v["symbol"], "tagline": v["tagline"], "accent": v["accent"]}
+    for k, v in EMOTIONS.items()
 ]
 
 GENERIC_MEAN = {
@@ -88,13 +124,16 @@ GENERIC_MEAN = {
     "eyeBlinkLeft": 0.10, "eyeBlinkRight": 0.10, "noseSneerLeft": 0.03, "noseSneerRight": 0.03,
     "browDownLeft": 0.06, "browDownRight": 0.06, "mouthFrownLeft": 0.05, "mouthFrownRight": 0.05,
     "mouthUpperUpLeft": 0.05, "mouthUpperUpRight": 0.05, "mouthSmileLeft": 0.05, "mouthSmileRight": 0.05,
-    "browInnerUp": 0.06, "eyeWideLeft": 0.02, "eyeWideRight": 0.02,
+    "browInnerUp": 0.06, "browOuterUpLeft": 0.10, "browOuterUpRight": 0.10,
+    "eyeWideLeft": 0.02, "eyeWideRight": 0.02,
+    "mouthStretchLeft": 0.02, "mouthStretchRight": 0.02, "mouthPressLeft": 0.02, "mouthPressRight": 0.02,
+    "eyeLookDownLeft": 0.05, "eyeLookDownRight": 0.05,
 }
 GENERIC_SIGMA = 0.035
 
 
 class Baseline:
-    """Resting face calibration wrapper."""
+    """Resting face baseline calibration wrapper."""
     def __init__(self, mean=None, sigma=None, samples=0, made=None):
         self.mean = mean or {}
         self.sigma = sigma or {}
@@ -130,32 +169,22 @@ class Baseline:
 
 
 class EmotionEngine:
-    """Evaluates facial blendshapes against personal baseline to determine emotion and style."""
+    """Calculates real-time classification across all 10 emotional states."""
     def __init__(self, calib_path=None):
         self.calib_path = calib_path or os.path.join(os.path.dirname(__file__), "calibration.json")
         self.baseline = Baseline.load(self.calib_path)
         self.smoothed_scores = {e: 0.0 for e in EMOTIONS}
-        self.history = []
 
     def reload_baseline(self):
         self.baseline = Baseline.load(self.calib_path)
 
     def analyze(self, blendshapes, turn_signed=0.0):
         """
-        Analyze blendshape dictionary {category_name: score}.
-        Returns dict with:
-          - emotion: primary emotion key (e.g. 'ANGRY')
-          - label: human readable label ('Aggressive')
-          - symbol: emoji
-          - style: recommended design style name ('Brutalist')
-          - confidence: score between 0 and 100
-          - scores: dict of all emotion intensities
-          - telemetry: key blendshape channels for UI visualization
+        Takes blendshapes {category: score} and computes dominant emotion from 10 classes.
         """
         b = blendshapes.get
         base = self.baseline
 
-        # Helper to compute Z-scores across left & right channels
         def z_ch(name):
             return base.z(name, b(name, 0.0))
 
@@ -167,6 +196,7 @@ class EmotionEngine:
         def raw_pair(name):
             return (b(name + "Left", 0.0) + b(name + "Right", 0.0)) / 2.0
 
+        # Channels
         jaw_open = b("jawOpen", 0.0)
         z_jaw = z_ch("jawOpen")
 
@@ -178,6 +208,10 @@ class EmotionEngine:
 
         brow_inner_up = b("browInnerUp", 0.0)
         z_brow_inner_up = z_ch("browInnerUp")
+
+        brow_outer_up_l = b("browOuterUpLeft", 0.0)
+        brow_outer_up_r = b("browOuterUpRight", 0.0)
+        brow_outer_up = (brow_outer_up_l + brow_outer_up_r) / 2.0
 
         frown = raw_pair("mouthFrown")
         z_frown = z_pair("mouthFrown")
@@ -191,53 +225,86 @@ class EmotionEngine:
         squint = max(raw_pair("eyeSquint"), raw_pair("eyeBlink"))
         z_squint = max(z_pair("eyeSquint"), z_pair("eyeBlink"))
 
+        stretch = raw_pair("mouthStretch")
+        z_stretch = z_pair("mouthStretch")
+
+        press = raw_pair("mouthPress")
+        look_down = raw_pair("eyeLookDown")
+
         turn = abs(turn_signed - base.neutral_turn)
 
-        # Raw emotion intensities
-        raw_scores = {}
+        # Compute raw scores for each of the 10 emotions
+        raw = {}
 
-        # 1. ANGER: furrowed brow, nose sneer, tight mouth / pressed lips
-        raw_scores["ANGRY"] = max(0.0, (z_brow_down * 1.5 + z_sneer * 1.2 + z_frown * 0.8) / 3.0)
+        # 1. HAPPY: High smile, cheek squint, low brow down
+        happy_score = z_smile * 2.2 + z_squint * 0.4 - z_frown * 0.6
+        if smile > 0.15:
+            happy_score += 1.5
+        raw["HAPPY"] = max(0.0, happy_score)
 
-        # 2. OVERWHELMED / SADNESS: inner brows up, mouth frown, droop
-        raw_scores["OVERWHELMED"] = max(0.0, (z_brow_inner_up * 1.6 + z_frown * 1.4 - z_smile * 0.8) / 2.5)
+        # 2. SAD: Raised inner brow, mouth frown, depressed corners
+        sad_score = z_brow_inner_up * 1.8 + z_frown * 1.5 - z_smile * 1.2
+        if brow_inner_up > 0.15 and smile < 0.1:
+            sad_score += 1.2
+        raw["SAD"] = max(0.0, sad_score)
 
-        # 3. SHOCKED: wide open jaw, raised brows, wide eyes
-        raw_scores["SHOCKED"] = max(0.0, (z_jaw * 1.4 + z_eye_wide * 1.3 + z_brow_inner_up * 0.8) / 3.0)
+        # 3. ANGRY: Brow down, nose sneer, mouth press
+        angry_score = z_brow_down * 1.8 + z_sneer * 1.4 + press * 3.0 - z_smile * 0.8
+        if brow_down > 0.15:
+            angry_score += 1.2
+        raw["ANGRY"] = max(0.0, angry_score)
 
-        # 4. AMUSED / HAPPINESS: smile, cheek squint, dimples
-        raw_scores["AMUSED"] = max(0.0, (z_smile * 1.8 + z_squint * 0.6) / 2.0)
+        # 4. SURPRISED: Wide open jaw, wide eyes, raised outer brows
+        surprised_score = z_jaw * 1.8 + z_eye_wide * 1.6 + brow_outer_up * 4.0
+        if jaw_open > 0.35:
+            surprised_score += 2.0
+        raw["SURPRISED"] = max(0.0, surprised_score)
 
-        # 5. CONFIDENT: subtle smile, steady posture, low tension, slight chin elevation
-        confidence_base = max(0.0, (z_smile * 0.7 - z_brow_down * 0.5 - z_frown * 0.8))
-        if 0.05 <= smile <= 0.35 and brow_down < 0.2:
-            confidence_base += 1.0
-        raw_scores["CONFIDENT"] = max(0.0, confidence_base)
+        # 5. FEAR: Wide eyes, inner brow up, lateral mouth stretch
+        fear_score = z_eye_wide * 1.5 + z_brow_inner_up * 1.4 + z_stretch * 1.6
+        if eye_wide > 0.2 and stretch > 0.1:
+            fear_score += 1.5
+        raw["FEAR"] = max(0.0, fear_score)
 
-        # 6. SUSPICIOUS: head turn combined with squint / asymmetric brow
-        suspicious_score = (turn * 6.0) + (z_squint * 0.8)
-        if turn > 0.08 and squint > 0.15:
-            suspicious_score += 1.5
-        raw_scores["SUSPICIOUS"] = max(0.0, suspicious_score)
+        # 6. DISGUST: Intense nose sneer, upper lip raised, squint
+        disgust_score = z_sneer * 2.5 + z_ch("mouthUpperUpLeft") * 1.5 + z_squint * 0.8
+        if sneer > 0.08:
+            disgust_score += 2.0
+        raw["DISGUST"] = max(0.0, disgust_score)
 
-        # 7. NEUTRAL: inverse of expression excitement
-        total_energy = sum(raw_scores.values())
-        neutral_score = max(0.0, 3.5 - total_energy * 0.5)
-        raw_scores["NEUTRAL"] = neutral_score
+        # 7. CONFUSED: Asymmetric brow (one down, one up) + head turn/tilt + squint
+        asym_brow = abs(b("browDownLeft", 0.0) - b("browDownRight", 0.0)) + abs(brow_outer_up_l - brow_outer_up_r)
+        confused_score = asym_brow * 6.0 + turn * 4.5 + z_squint * 0.6
+        if asym_brow > 0.08:
+            confused_score += 1.8
+        raw["CONFUSED"] = max(0.0, confused_score)
+
+        # 8. EXCITED: Combination of high smile + open jaw + wide eyes
+        excited_score = z_smile * 1.5 + z_jaw * 1.3 + z_eye_wide * 1.2
+        if smile > 0.3 and jaw_open > 0.2:
+            excited_score += 2.5
+        raw["EXCITED"] = max(0.0, excited_score)
+
+        # 9. EMBARRASSED: Tight press smile + looking down or away + slight blush tension
+        embarrassed_score = press * 4.0 + z_smile * 0.8 + look_down * 3.5 - z_jaw * 1.0
+        if press > 0.15 and smile > 0.05:
+            embarrassed_score += 1.6
+        raw["EMBARRASSED"] = max(0.0, embarrassed_score)
+
+        # 10. NEUTRAL: Dominates when other expressions have low excitement
+        total_energy = sum(raw.values())
+        raw["NEUTRAL"] = max(0.0, 3.2 - total_energy * 0.45)
 
         # Temporal smoothing (alpha = 0.35)
         for e in EMOTIONS:
-            self.smoothed_scores[e] = 0.65 * self.smoothed_scores.get(e, 0.0) + 0.35 * raw_scores[e]
+            self.smoothed_scores[e] = 0.65 * self.smoothed_scores.get(e, 0.0) + 0.35 * raw[e]
 
-        # Determine winner
+        # Winner
         best_emotion = max(self.smoothed_scores, key=self.smoothed_scores.get)
         best_val = self.smoothed_scores[best_emotion]
 
-        # Convert to confidence (normalized 0-100)
         total_s = sum(self.smoothed_scores.values()) + 1e-6
-        raw_conf = (best_val / total_s) * 100.0
-        # Scaled realistic confidence (between 65% and 98%)
-        confidence = min(98, max(58, int(raw_conf * 1.4 + 20)))
+        confidence = min(98, max(58, int((best_val / total_s) * 110.0 + 20)))
 
         info = EMOTIONS[best_emotion]
 
@@ -251,27 +318,20 @@ class EmotionEngine:
             "smile": round(float(smile), 3),
             "z_smile": round(float(z_smile), 1),
             "frown": round(float(frown), 3),
-            "z_frown": round(float(z_frown), 1),
             "squint": round(float(squint), 3),
-            "z_squint": round(float(z_squint), 1),
             "turn": round(float(turn), 3),
-        }
-
-        normalized_scores = {
-            e: round(float(self.smoothed_scores[e]), 2) for e in EMOTIONS
         }
 
         return {
             "emotion": best_emotion,
             "label": info["label"],
             "symbol": info["symbol"],
-            "style": info["default_style"],
+            "tagline": info["tagline"],
             "description": info["description"],
             "palette": info["palette"],
-            "typography": info["typography"],
+            "default_caption": info["default_caption"],
+            "accent": info["accent"],
             "confidence": confidence,
-            "scores": normalized_scores,
             "telemetry": telemetry,
             "is_calibrated": not self.baseline.generic,
         }
-

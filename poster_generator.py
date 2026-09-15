@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
 """
-poster_generator.py — Graphic design poster synthesis engine for REACTIONARY.
+poster_generator.py — Graphic design meme synthesis engine for REACTIONARY.
 
-Translates facial reaction, detected emotion, and design style into high-resolution,
-professionally composed graphic design posters adhering to authentic design principles:
-typographic hierarchy, mathematical grids, texture overlays, bespoke face treatments,
-and intentional editorial metadata.
+Generates visually rich, social-media-ready meme posters (1200 x 1600)
+based on detected or overridden facial emotions across 10 styles:
+  - Happy
+  - Sad
+  - Angry
+  - Surprised
+  - Fear
+  - Disgust
+  - Neutral
+  - Confused
+  - Excited
+  - Embarrassed
+
+Performs final brand compositing:
+  - Bottom-Left: Graphica Club Logo Watermark (proportions preserved, high contrast)
+  - Bottom-Right: Graphica Instagram QR Code (proportions preserved, fully scannable)
 """
 
 import os
@@ -16,1019 +28,733 @@ import numpy as np
 import cv2
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps, ImageEnhance
 
-# Standard poster dimensions: 1200 x 1600 (3:4 ratio)
 POSTER_WIDTH = 1200
 POSTER_HEIGHT = 1600
 
-# Font resolution helper
+HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS_DIR = "C:/Windows/Fonts"
 
-def get_font(name_candidates, size):
-    """Attempt to load the first existing font candidate, fallback to default."""
-    for name in name_candidates:
+# Helper to find and load available system fonts
+def get_font(candidates, size):
+    for name in candidates:
         p = os.path.join(FONTS_DIR, name)
         if os.path.isfile(p):
             try:
                 return ImageFont.truetype(p, size)
             except Exception:
                 continue
-    # Fallback
     try:
         return ImageFont.truetype(os.path.join(FONTS_DIR, "arial.ttf"), size)
     except Exception:
         return ImageFont.load_default()
 
-# Typography presets
 FONTS = {
-    "display_condensed": lambda s: get_font(["ARIALNB.TTF", "impact.ttf", "arialbd.ttf"], s),
-    "display_sans": lambda s: get_font(["arialbd.ttf", "segoeuib.ttf", "trebucbd.ttf"], s),
-    "display_serif": lambda s: get_font(["georgiab.ttf", "timesbd.ttf", "georgia.ttf"], s),
-    "body_sans": lambda s: get_font(["arial.ttf", "segoeui.ttf"], s),
-    "body_serif": lambda s: get_font(["georgia.ttf", "times.ttf"], s),
-    "mono": lambda s: get_font(["consolab.ttf", "consola.ttf", "cour.ttf"], s),
-    "display_rounded": lambda s: get_font(["comicbd.ttf", "arialbd.ttf"], s),
-    "display_heavy": lambda s: get_font(["impact.ttf", "arialbd.ttf"], s),
+    "impact": lambda s: get_font(["impact.ttf", "arialbd.ttf"], s),
+    "heavy": lambda s: get_font(["impact.ttf", "arialbd.ttf", "segoeuib.ttf"], s),
+    "condensed": lambda s: get_font(["ARIALNB.TTF", "impact.ttf", "arialbd.ttf"], s),
+    "sans_bold": lambda s: get_font(["arialbd.ttf", "segoeuib.ttf", "trebucbd.ttf"], s),
+    "sans": lambda s: get_font(["arial.ttf", "segoeui.ttf"], s),
+    "serif_bold": lambda s: get_font(["georgiab.ttf", "timesbd.ttf"], s),
+    "serif": lambda s: get_font(["georgia.ttf", "times.ttf"], s),
+    "mono_bold": lambda s: get_font(["consolab.ttf", "courbd.ttf"], s),
+    "mono": lambda s: get_font(["consola.ttf", "cour.ttf"], s),
+    "comic": lambda s: get_font(["comicbd.ttf", "comic.ttf", "arialbd.ttf"], s),
 }
 
+# --- Drawing & Visual Effect Utilities ---
 
-# --- Image and Texture Processing Helpers ---
-
-def add_film_grain(img, intensity=0.12):
-    """Add subtle photographic film grain texture to a PIL image."""
+def add_film_grain(img, intensity=0.10):
+    """Adds subtle film grain texture."""
     arr = np.array(img).astype(np.float32)
     noise = np.random.normal(0, intensity * 255, arr.shape)
     noisy = np.clip(arr + noise, 0, 255).astype(np.uint8)
     return Image.fromarray(noisy)
 
 
-def apply_halftone_effect(img, sample_rate=4):
-    """Apply print halftone dot pattern effect."""
+def duotone_filter(img, dark_rgb, light_rgb):
+    """Converts image to stylized two-color gradient map."""
     gray = img.convert("L")
-    w, h = gray.size
-    small = gray.resize((w // sample_rate, h // sample_rate), Image.Resampling.BILINEAR)
-    small_arr = np.array(small)
-    
-    out = Image.new("L", (w, h), 255)
-    draw = ImageDraw.Draw(out)
-    
-    for y in range(small_arr.shape[0]):
-        for x in range(small_arr.shape[1]):
-            val = small_arr[y, x]
-            # Darker pixel = larger dot
-            radius = (1.0 - (val / 255.0)) * (sample_rate * 0.7)
-            if radius > 0.5:
-                cx = x * sample_rate + sample_rate // 2
-                cy = y * sample_rate + sample_rate // 2
-                draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=0)
-    return out
+    arr = np.array(gray).astype(np.float32) / 255.0
+    r = (dark_rgb[0] * (1.0 - arr) + light_rgb[0] * arr).astype(np.uint8)
+    g = (dark_rgb[1] * (1.0 - arr) + light_rgb[1] * arr).astype(np.uint8)
+    b = (dark_rgb[2] * (1.0 - arr) + light_rgb[2] * arr).astype(np.uint8)
+    return Image.fromarray(np.stack([r, g, b], axis=-1))
 
 
-def chromatic_aberration(img, offset=6):
-    """Apply cyber chromatic RGB channel offset."""
+def chromatic_aberration(img, offset=7):
+    """RGB channel shift for chaotic/shock vibes."""
     arr = np.array(img.convert("RGB"))
-    h, w, c = arr.shape
+    h, w, _ = arr.shape
     out = np.zeros_like(arr)
-    
-    # Red shifted right
     out[:, offset:w, 0] = arr[:, 0:w - offset, 0]
-    # Green untouched
     out[:, :, 1] = arr[:, :, 1]
-    # Blue shifted left
     out[:, 0:w - offset, 2] = arr[:, offset:w, 2]
     return Image.fromarray(out)
 
 
-def duotone_filter(img, dark_rgb, light_rgb):
-    """Convert grayscale image into a 2-color duotone."""
-    gray = img.convert("L")
-    arr = np.array(gray).astype(np.float32) / 255.0
-    
-    r = (dark_rgb[0] * (1.0 - arr) + light_rgb[0] * arr).astype(np.uint8)
-    g = (dark_rgb[1] * (1.0 - arr) + light_rgb[1] * arr).astype(np.uint8)
-    b = (dark_rgb[2] * (1.0 - arr) + light_rgb[2] * arr).astype(np.uint8)
-    
-    rgb = np.stack([r, g, b], axis=-1)
-    return Image.fromarray(rgb)
-
-
-def crop_face_area(frame, box=None):
-    """Crop the head and shoulders region from camera frame (BGR numpy array)."""
+def crop_face_portrait(frame, box=None):
+    """Extracts recognizable face and upper shoulders from camera frame."""
     h, w = frame.shape[:2]
     if box:
         x0, y0, x1, y1 = box
         fw, fh = x1 - x0, y1 - y0
         cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-        
-        # Generous portrait crop (head and upper shoulders)
-        crop_w = int(fw * 1.7)
-        crop_h = int(fh * 2.2)
-        
+        crop_w = int(fw * 1.8)
+        crop_h = int(fh * 2.3)
         nx0 = max(0, cx - crop_w // 2)
         ny0 = max(0, cy - int(crop_h * 0.45))
         nx1 = min(w, nx0 + crop_w)
         ny1 = min(h, ny0 + crop_h)
         face_roi = frame[ny0:ny1, nx0:nx1]
     else:
-        # Center portrait fallback
-        ch, cw = int(h * 0.8), int(h * 0.8 * 0.75)
+        ch, cw = int(h * 0.85), int(h * 0.85 * 0.8)
         nx0 = max(0, (w - cw) // 2)
         ny0 = max(0, (h - ch) // 2)
         face_roi = frame[ny0:ny0 + ch, nx0:nx0 + cw]
-        
+
     rgb = cv2.cvtColor(face_roi, cv2.COLOR_BGR2RGB)
     return Image.fromarray(rgb)
 
 
-def draw_barcode(draw, x, y, width=180, height=36, fill=(0, 0, 0)):
-    """Draw a realistic vector barcode graphic."""
-    np.random.seed(42)
-    cur_x = x
-    while cur_x < x + width:
-        bar_w = np.random.choice([2, 3, 4, 6])
-        gap = np.random.choice([2, 3, 5])
-        draw.rectangle([cur_x, y, cur_x + bar_w, y + height], fill=fill)
-        cur_x += bar_w + gap
+def draw_text_with_outline(draw, pos, text, font, text_color, outline_color, outline_width=3):
+    """Draws classic impact meme text with a bold dark outline."""
+    x, y = pos
+    for dx in range(-outline_width, outline_width + 1):
+        for dy in range(-outline_width, outline_width + 1):
+            if dx != 0 or dy != 0:
+                draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+    draw.text((x, y), text, font=font, fill=text_color)
 
 
-def draw_crosshair(draw, cx, cy, size=14, fill=(255, 255, 255, 180)):
-    """Draw an editorial alignment crosshair."""
-    draw.line([cx - size, cy, cx + size, cy], fill=fill, width=1)
-    draw.line([cx, cy - size, cx, cy + size], fill=fill, width=1)
-    draw.ellipse([cx - 3, cy - 3, cx + 3, cy + 3], outline=fill, width=1)
+def draw_comic_starburst(draw, cx, cy, num_points=12, r_inner=60, r_outer=130, fill=(255, 220, 0), outline=(0, 0, 0)):
+    """Draws an explosive comic-book starburst sticker."""
+    pts = []
+    angle_step = (2 * math.pi) / (num_points * 2)
+    for i in range(num_points * 2):
+        r = r_outer if i % 2 == 0 else r_inner
+        ang = i * angle_step
+        pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+    draw.polygon(pts, fill=fill, outline=outline)
 
 
-def draw_chrome_star(draw, cx, cy, radius=24, fill=(255, 255, 255)):
-    """Draw a Y2K 4-pointed sparkle star."""
-    points = [
-        (cx, cy - radius),
-        (cx + radius * 0.22, cy - radius * 0.22),
-        (cx + radius, cy),
-        (cx + radius * 0.22, cy + radius * 0.22),
-        (cx, cy + radius),
-        (cx - radius * 0.22, cy + radius * 0.22),
-        (cx - radius, cy),
-        (cx - radius * 0.22, cy - radius * 0.22),
-    ]
-    draw.polygon(points, fill=fill)
+def draw_speech_bubble(draw, x0, y0, x1, y1, tail_pos, fill=(255, 255, 255), outline=(0, 0, 0), width=3):
+    """Draws a clean comic speech bubble."""
+    draw.rounded_rectangle([x0, y0, x1, y1], radius=20, fill=fill, outline=outline, width=width)
+    # Triangle tail
+    tx, ty = tail_pos
+    bx = (x0 + x1) // 2
+    by = y1
+    draw.polygon([(bx - 20, by - 2), (bx + 20, by - 2), (tx, ty)], fill=fill)
+    draw.line([(bx - 20, by), (tx, ty), (bx + 20, by)], fill=outline, width=width)
 
 
-# --- 10 DESIGN STYLE POSTER RENDERERS ---
+# --- 10 DISTINCT EMOTION MEME RENDERERS ---
 
-class PosterRenderer:
-    """Base class for design styles."""
-    def __init__(self, data):
-        self.emotion = data.get("emotion", "NEUTRAL")
-        self.label = data.get("label", "Unimpressed").upper()
-        self.style = data.get("style", "Swiss")
-        self.score = data.get("confidence", 85)
-        self.design_id = data.get("design_id", f"#RX-{random.randint(100, 999)}")
-        self.timestamp = time.strftime("%Y.%m.%d // %H:%M:%S")
-        self.face_img = data.get("face_img")
-        self.params = data.get("params", {})
+class BaseMemeRenderer:
+    def __init__(self, face_img, emotion_data, params=None):
+        self.face_img = face_img
+        self.emotion = emotion_data.get("emotion", "HAPPY")
+        self.label = emotion_data.get("label", "Happy")
+        self.caption = emotion_data.get("default_caption", "POV: YOU GOT THE MEME")
+        self.confidence = emotion_data.get("confidence", 90)
+        self.params = params or {}
+        self.design_id = f"#RX-{random.randint(100, 999)}"
+        self.timestamp = time.strftime("%Y.%m.%d // %H:%M")
 
 
-class SwissRenderer(PosterRenderer):
-    """
-    Swiss / International Typographic Style:
-    - Strict mathematical modular grid
-    - Stark monochrome with striking vermillion red (#FF3B00)
-    - Grotesque uppercase display typography, asymmetrical balance
-    - Section index numbers, alignment crosshairs, hairline borders
-    """
+class HappyMemeRenderer(BaseMemeRenderer):
+    """Bright, sunny, wholesome pop meme with joyful stickers and energetic typography."""
     def render(self):
         W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (245, 245, 243))
+        poster = Image.new("RGB", (W, H), (255, 222, 40))
         draw = ImageDraw.Draw(poster)
-        
-        # Grid lines (light gray)
-        margin = 60
-        cols = 4
-        col_w = (W - margin * 2) // cols
-        
-        for i in range(cols + 1):
-            gx = margin + i * col_w
-            draw.line([gx, margin, gx, H - margin], fill=(225, 225, 222), width=1)
-        
-        for gy in range(margin, H - margin, 120):
-            draw.line([margin, gy, W - margin, gy], fill=(235, 235, 233), width=1)
 
-        # Header section
-        f_label = FONTS["body_sans"](16)
-        f_num = FONTS["display_condensed"](42)
-        f_title = FONTS["display_sans"](118)
-        f_mono = FONTS["mono"](14)
-        
-        draw.text((margin, margin), "REACTIONARY / SWISS ARCHIVE", font=f_label, fill=(20, 20, 20))
-        draw.text((W - margin - 140, margin), "ISO 216 / A1", font=f_mono, fill=(120, 120, 120))
-        draw.text((W - margin - 60, margin + 25), "01", font=f_num, fill=(255, 59, 0))
-        
-        # Solid vermillion accent block
-        draw.rectangle([margin, margin + 60, margin + col_w * 2, margin + 68], fill=(255, 59, 0))
-        
-        # Main Display Headline
-        draw.text((margin - 6, margin + 90), self.label, font=f_title, fill=(12, 12, 12))
-        
-        # Secondary subhead
-        f_sub = FONTS["display_sans"](28)
-        draw.text((margin, margin + 225), "INTERNATIONAL TYPOGRAPHIC SYSTEM", font=f_sub, fill=(255, 59, 0))
-        
-        # Face Treatment: High contrast black & white with geometric cropping
-        face_y = margin + 300
-        face_w = col_w * 3
-        face_h = 700
-        
-        if self.face_img:
-            f_proc = ImageOps.grayscale(self.face_img)
-            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.4)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            poster.paste(f_proc.convert("RGB"), (margin, face_y))
-        else:
-            draw.rectangle([margin, face_y, margin + face_w, face_y + face_h], fill=(200, 200, 200))
-        
-        # Face border and registration mark
-        draw.rectangle([margin, face_y, margin + face_w, face_y + face_h], outline=(15, 15, 15), width=2)
-        draw_crosshair(draw, margin, face_y, 16, fill=(255, 59, 0))
-        draw_crosshair(draw, margin + face_w, face_y + face_h, 16, fill=(255, 59, 0))
-        
-        # Right column metadata block
-        rx = margin + col_w * 3 + 30
-        draw.text((rx, face_y), "REACTION TELEMETRY", font=FONTS["display_sans"](16), fill=(15, 15, 15))
-        draw.line([rx, face_y + 26, W - margin, face_y + 26], fill=(15, 15, 15), width=2)
-        
-        meta_items = [
-            ("EMOTION", self.label),
-            ("CONFIDENCE", f"{self.score}%"),
-            ("INDEX ID", self.design_id),
-            ("STYLE", "SWISS 1957"),
-            ("GRID UNIT", "8PT MODULAR"),
-            ("WEIGHT", "HEAVY BLACK"),
-            ("TIMESTAMP", self.timestamp),
-        ]
-        
-        my = face_y + 45
-        for k, v in meta_items:
-            draw.text((rx, my), k, font=FONTS["mono"](12), fill=(130, 130, 130))
-            draw.text((rx, my + 16), v, font=FONTS["display_sans"](18), fill=(20, 20, 20))
-            my += 54
-            
-        # Large graphical percentage
-        draw.text((rx, my + 40), f"{self.score}", font=FONTS["display_condensed"](120), fill=(255, 59, 0))
-        draw.text((rx + 150, my + 60), "%", font=FONTS["display_sans"](48), fill=(20, 20, 20))
-        draw.text((rx, my + 170), "FACIAL COHESION INDEX", font=FONTS["mono"](12), fill=(100, 100, 100))
+        # Sunburst ray background
+        cx, cy = W // 2, 600
+        for deg in range(0, 360, 20):
+            rad1 = math.radians(deg)
+            rad2 = math.radians(deg + 10)
+            p1 = (cx + 1400 * math.cos(rad1), cy + 1400 * math.sin(rad1))
+            p2 = (cx + 1400 * math.cos(rad2), cy + 1400 * math.sin(rad2))
+            draw.polygon([(cx, cy), p1, p2], fill=(255, 198, 10))
 
-        # Bottom section
-        bot_y = face_y + face_h + 50
-        draw.line([margin, bot_y, W - margin, bot_y], fill=(15, 15, 15), width=3)
-        
-        p1 = ("THE PURPOSE OF THE TYPOGRAPHIC GRID IS TO FACILITATE STRUCTURAL ORDER, "
-              "OBJECTIVE CLARITY, AND HARMONIOUS RHYTHM IN EXPERIMENTAL INTERFACES.")
-        draw.text((margin, bot_y + 25), p1, font=FONTS["mono"](14), fill=(60, 60, 60))
-        
-        draw_barcode(draw, margin, bot_y + 90, width=220, height=44, fill=(15, 15, 15))
-        draw.text((margin + 240, bot_y + 115), f"REACTIONARY STUDIO // {self.design_id} // VERIFIED",
-                  font=FONTS["mono"](13), fill=(100, 100, 100))
-        
-        return poster
+        # Top Meme Banner
+        draw.rectangle([50, 45, W - 50, 150], fill=(255, 42, 133))
+        draw.rectangle([50, 45, W - 50, 150], outline=(0, 0, 0), width=5)
+        f_top = FONTS["impact"](64)
+        draw.text((75, 60), "POV: YOUR CODE COMPILES ON FIRST TRY", font=f_top, fill=(255, 255, 255))
 
+        # Face Display with Fun Sticker Frame
+        fw, fh = 800, 800
+        fx, fy = (W - fw) // 2, 220
+        draw.rectangle([fx + 18, fy + 18, fx + fw + 18, fy + fh + 18], fill=(0, 0, 0))
 
-class BrutalistRenderer(PosterRenderer):
-    """
-    Brutalist / Aggressive Style:
-    - Pitch black background, pure white, and neon-lime (#CCFF00) accents
-    - Heavy condensed display typography, raw borders, warning badges
-    - Extreme scale contrast, high-contrast face dither, barcode & raw stamps
-    """
-    def render(self):
-        W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (10, 10, 12))
-        draw = ImageDraw.Draw(poster)
-        
-        margin = 50
-        
-        # Hazard stripe top bar
-        stripe_w = 24
-        for sx in range(0, W, stripe_w * 2):
-            draw.polygon([(sx, 0), (sx + stripe_w, 0), (sx + stripe_w - 20, 24), (sx - 20, 24)], fill=(204, 255, 0))
-            draw.polygon([(sx + stripe_w, 0), (sx + stripe_w * 2, 0), (sx + stripe_w * 2 - 20, 24), (sx + stripe_w - 20, 24)], fill=(0, 0, 0))
-
-        # Raw Header Box
-        draw.rectangle([margin, 44, W - margin, 100], outline=(255, 255, 255), width=3)
-        draw.text((margin + 20, 60), "WARNING // HIGH TENSION PSYCHOLOGICAL MANIFEST", font=FONTS["mono"](18), fill=(204, 255, 0))
-        draw.text((W - margin - 220, 60), self.design_id, font=FONTS["mono"](20), fill=(255, 255, 255))
-        
-        # Massive Raw Headline
-        f_huge = FONTS["display_condensed"](160)
-        draw.text((margin, 120), self.label, font=f_huge, fill=(255, 255, 255))
-        
-        # Overlapping highlight box
-        f_sub = FONTS["display_condensed"](36)
-        sub_text = "AGGRESSIVE STATE DETECTED"
-        bbox = draw.textbbox((margin + 16, 305), sub_text, font=f_sub)
-        draw.rectangle([margin, 290, bbox[2] + 20, 348], fill=(204, 255, 0))
-        draw.text((margin + 16, 305), sub_text, font=f_sub, fill=(0, 0, 0))
-
-        # Face Treatment: High contrast thresholded dither with electric lime duotone
-        face_w, face_h = 750, 750
-        face_x, face_y = margin, 380
-        
-        if self.face_img:
-            f_proc = ImageOps.grayscale(self.face_img)
-            f_proc = ImageEnhance.Contrast(f_proc).enhance(2.2)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            # High-contrast duotone (black & neon lime)
-            duo = duotone_filter(f_proc, (10, 10, 12), (204, 255, 0))
-            poster.paste(duo, (face_x, face_y))
-        else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(40, 40, 40))
-            
-        # Heavy border with corner tabs
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(255, 255, 255), width=4)
-        tab_sz = 30
-        draw.rectangle([face_x - 5, face_y - 5, face_x + tab_sz, face_y + tab_sz], fill=(204, 255, 0))
-        draw.rectangle([face_x + face_w - tab_sz, face_y + face_h - tab_sz, face_x + face_w + 5, face_y + face_h + 5], fill=(204, 255, 0))
-
-        # Right-side Brutalist Telemetry Stack
-        tx = face_x + face_w + 30
-        draw.rectangle([tx, face_y, W - margin, face_y + 260], fill=(255, 255, 255))
-        draw.text((tx + 16, face_y + 20), "REACTION", font=FONTS["mono"](14), fill=(0, 0, 0))
-        draw.text((tx + 16, face_y + 45), f"{self.score}%", font=FONTS["display_condensed"](90), fill=(0, 0, 0))
-        draw.text((tx + 16, face_y + 145), "FORCE FACTOR", font=FONTS["mono"](14), fill=(100, 100, 100))
-        draw.rectangle([tx + 16, face_y + 175, tx + 16 + int(260 * (self.score / 100.0)), face_y + 200], fill=(204, 255, 0))
-        draw.rectangle([tx + 16, face_y + 175, tx + 276, face_y + 200], outline=(0, 0, 0), width=2)
-        draw.text((tx + 16, face_y + 215), "THRESHOLD EXCEEDED", font=FONTS["mono"](13), fill=(200, 0, 0))
-
-        # Barcode & Stamp
-        draw_barcode(draw, tx, face_y + 300, width=int(W - margin - tx), height=55, fill=(255, 255, 255))
-        draw.text((tx, face_y + 365), f"SYS.LOG // {self.timestamp}", font=FONTS["mono"](12), fill=(180, 180, 180))
-
-        # Technical specification box
-        draw.rectangle([tx, face_y + 420, W - margin, face_y + face_h], outline=(204, 255, 0), width=2)
-        specs = [
-            f"ID: {self.design_id}",
-            "MODE: BRUTALIST",
-            "GRID: UNREGULATED",
-            "CONTRAST: MAXIMAL",
-            "DISTORTION: +18dB",
-            "STATUS: CRITICAL",
-        ]
-        sy = face_y + 440
-        for s in specs:
-            draw.text((tx + 16, sy), s, font=FONTS["mono"](14), fill=(255, 255, 255))
-            sy += 42
-
-        # Bottom Manifesto Banner
-        bot_y = face_y + face_h + 40
-        draw.rectangle([margin, bot_y, W - margin, bot_y + 110], fill=(204, 255, 0))
-        draw.text((margin + 20, bot_y + 20), "REACTIONARY / EXPERIMENTAL GRAPHIC PRODUCTION",
-                  font=FONTS["display_condensed"](34), fill=(0, 0, 0))
-        draw.text((margin + 20, bot_y + 65), "FORM FOLLOWS RAW EMOTION. NO ORNAMENTATION WITHOUT FRICTION.",
-                  font=FONTS["mono"](15), fill=(0, 0, 0))
-
-        # Add heavy film grain
-        poster = add_film_grain(poster, intensity=0.18)
-        return poster
-
-
-class Y2KRenderer(PosterRenderer):
-    """
-    Y2K / Cyber Chrome Style:
-    - Deep midnight blue/black with cyan (#00F0FF), hot pink (#FF007A), chrome white
-    - 4-pointed metallic stars, 3D wireframe perspective grids, lens flare highlights
-    - Futuristic extended sans, liquid cyber frames
-    """
-    def render(self):
-        W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (7, 11, 25))
-        draw = ImageDraw.Draw(poster)
-        
-        # Perspective wireframe grid at bottom
-        grid_start_y = H - 420
-        for gy in range(grid_start_y, H, 28):
-            alpha = int(40 + (gy - grid_start_y) * 0.4)
-            draw.line([0, gy, W, gy], fill=(0, 180, 240), width=1)
-        
-        # Converging perspective lines
-        vanishing_pt = (W // 2, grid_start_y - 100)
-        for vx in range(-200, W + 200, 90):
-            draw.line([vanishing_pt[0], vanishing_pt[1], vx, H], fill=(0, 120, 200), width=1)
-            
-        # Top cyber navigation
-        margin = 55
-        draw.text((margin, 50), "/// CYBER.GEN.00 // Y2K LAB", font=FONTS["mono"](16), fill=(0, 240, 255))
-        draw.text((W - margin - 220, 50), "NET.ARCHIVE.SYS", font=FONTS["mono"](16), fill=(255, 0, 122))
-        draw.line([margin, 80, W - margin, 80], fill=(0, 240, 255), width=2)
-        
-        # Chrome 4-point stars
-        draw_chrome_star(draw, margin + 40, 130, radius=32, fill=(255, 255, 255))
-        draw_chrome_star(draw, W - margin - 80, 240, radius=48, fill=(0, 240, 255))
-        draw_chrome_star(draw, W - 120, 780, radius=28, fill=(255, 0, 122))
-
-        # Main Display Title with Cyber glow shadow
-        f_title = FONTS["display_condensed"](125)
-        # Shadow / Glow offset
-        draw.text((margin + 4, 114), self.label, font=f_title, fill=(255, 0, 122))
-        draw.text((margin - 4, 106), self.label, font=f_title, fill=(0, 240, 255))
-        draw.text((margin, 110), self.label, font=f_title, fill=(255, 255, 255))
-        
-        draw.text((margin, 255), f"HYPERSTITION PROTOCOL // {self.design_id}", font=FONTS["mono"](18), fill=(0, 240, 255))
-
-        # Center Face Display with Chromatic Aberration and Cyber Frame
-        face_w, face_h = 760, 680
-        face_x = (W - face_w) // 2
-        face_y = 310
-        
-        if self.face_img:
-            f_proc = ImageEnhance.Color(self.face_img).enhance(1.4)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            # Apply chromatic aberration
-            f_proc = chromatic_aberration(f_proc, offset=8)
-            poster.paste(f_proc, (face_x, face_y))
-        else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(20, 30, 60))
-            
-        # Cyber oval / bracket overlays
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(0, 240, 255), width=2)
-        draw.rectangle([face_x + 10, face_y + 10, face_x + face_w - 10, face_y + face_h - 10], outline=(255, 0, 122), width=1)
-        
-        # Cyber corner brackets
-        bw = 40
-        draw.line([face_x - 10, face_y - 10, face_x - 10 + bw, face_y - 10], fill=(255, 255, 255), width=3)
-        draw.line([face_x - 10, face_y - 10, face_x - 10, face_y - 10 + bw], fill=(255, 255, 255), width=3)
-        draw.line([face_x + face_w + 10, face_y + face_h + 10, face_x + face_w + 10 - bw, face_y + face_h + 10], fill=(255, 255, 255), width=3)
-        draw.line([face_x + face_w + 10, face_y + face_h + 10, face_x + face_w + 10, face_y + face_h + 10 - bw], fill=(255, 255, 255), width=3)
-
-        # Bottom HUD Controls
-        hud_y = face_y + face_h + 40
-        # Pill Badges
-        draw.rounded_rectangle([margin, hud_y, margin + 260, hud_y + 60], radius=30, fill=(0, 240, 255))
-        draw.text((margin + 32, hud_y + 18), f"SHOCK INDEX: {self.score}%", font=FONTS["display_condensed"](24), fill=(0, 0, 0))
-        
-        draw.rounded_rectangle([margin + 280, hud_y, margin + 560, hud_y + 60], radius=30, outline=(255, 0, 122), width=2)
-        draw.text((margin + 315, hud_y + 18), "NEURAL SYNC: OPTIMAL", font=FONTS["display_condensed"](24), fill=(255, 0, 122))
-
-        draw_barcode(draw, W - margin - 220, hud_y + 8, width=220, height=45, fill=(0, 240, 255))
-
-        # Bottom Floating Lyrics / Manifesto
-        draw.text((margin, H - 90), "FUTURE IS NOW // DIGITAL ORGANISM EVOLUTION // ALL RIGHTS PRESERVED 2000-2026",
-                  font=FONTS["mono"](14), fill=(160, 180, 220))
-        
-        return poster
-
-
-class EditorialRenderer(PosterRenderer):
-    """
-    Luxury Editorial / Haute Couture Style:
-    - Sophisticated obsidian, champagne gold (#D4AF37), and warm alabaster
-    - High-fashion serif typography with extreme scale contrast
-    - Generous negative space, fine editorial hairline rules, photographic grain
-    """
-    def render(self):
-        W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (18, 18, 20))
-        draw = ImageDraw.Draw(poster)
-        
-        margin = 70
-        
-        # Elegant Magazine Folio
-        draw.text((margin, 60), "REACTIONARY MAGAZINE", font=FONTS["display_serif"](20), fill=(212, 175, 55))
-        draw.text((W // 2 - 60, 60), "ISSUE N° 42", font=FONTS["mono"](16), fill=(160, 160, 160))
-        draw.text((W - margin - 160, 60), "AUTUMN / WINTER", font=FONTS["body_sans"](16), fill=(200, 200, 200))
-        draw.line([margin, 95, W - margin, 95], fill=(212, 175, 55), width=1)
-        
-        # Giant Dramatic Headline
-        f_display = FONTS["display_serif"](130)
-        draw.text((margin - 5, 120), self.label.title(), font=f_display, fill=(245, 245, 245))
-        
-        # Sub-headline
-        f_italic = FONTS["body_serif"](26)
-        draw.text((margin, 280), "A Study in Human Poise, Internal Architecture and Quiet Authority",
-                  font=f_italic, fill=(212, 175, 55))
-
-        # Face Portrait: Luxurious Monochrome with deep velvety shadows
-        face_w = 680
-        face_h = 880
-        face_x = margin
-        face_y = 350
-        
-        if self.face_img:
-            f_proc = ImageOps.grayscale(self.face_img)
-            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.3)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            # Warm duotone toning (obsidian to warm ivory)
-            f_proc = duotone_filter(f_proc, (18, 18, 20), (242, 238, 230))
-            poster.paste(f_proc, (face_x, face_y))
-        else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(35, 35, 38))
-            
-        # Subtle hairline frame
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(212, 175, 55), width=1)
-
-        # Right Column Editorial Paragraph & Typography Spec
-        rx = face_x + face_w + 45
-        draw.text((rx, face_y + 10), "VOL. VII — PORTRAIT ESSAY", font=FONTS["mono"](13), fill=(212, 175, 55))
-        draw.line([rx, face_y + 35, W - margin, face_y + 35], fill=(100, 100, 100), width=1)
-        
-        essay = (
-            "Confidence is neither loud nor hurried. It inhabits the space between perception "
-            "and reaction with absolute stillness. Through micro-movements of the brow and chin, "
-            "the subject communicates an immutable composure."
-        )
-        
-        # Wrap essay text
-        words = essay.split()
-        cur_y = face_y + 60
-        line = ""
-        for w in words:
-            test = line + (" " if line else "") + w
-            if len(test) > 28:
-                draw.text((rx, cur_y), line, font=FONTS["body_serif"](17), fill=(210, 210, 210))
-                cur_y += 28
-                line = w
-            else:
-                line = test
-        if line:
-            draw.text((rx, cur_y), line, font=FONTS["body_serif"](17), fill=(210, 210, 210))
-            cur_y += 35
-
-        # Metadata Card
-        draw.rectangle([rx, cur_y + 30, W - margin, cur_y + 260], outline=(70, 70, 75), width=1)
-        draw.text((rx + 20, cur_y + 50), "SUBJECT METRICS", font=FONTS["mono"](13), fill=(160, 160, 160))
-        draw.text((rx + 20, cur_y + 80), f"SCORE: {self.score}%", font=FONTS["display_serif"](36), fill=(212, 175, 55))
-        draw.text((rx + 20, cur_y + 140), f"SPEC: {self.design_id}", font=FONTS["mono"](15), fill=(240, 240, 240))
-        draw.text((rx + 20, cur_y + 175), f"TIME: {self.timestamp}", font=FONTS["mono"](12), fill=(140, 140, 140))
-        draw.text((rx + 20, cur_y + 205), "EDITION: 1 OF 1 MONOPRINT", font=FONTS["mono"](12), fill=(140, 140, 140))
-
-        # Bottom quote
-        draw.line([margin, H - 140, W - margin, H - 140], fill=(212, 175, 55), width=1)
-        draw.text((W - margin - 140, H - 165), self.design_id, font=FONTS["mono"](14), fill=(212, 175, 55))
-        draw.text((margin, H - 105), f"“WHEN THE REACTION SPEAKS WITHOUT WORDS, DESIGN BECOMES ITS VOICE.”",
-                  font=FONTS["display_serif"](20), fill=(240, 240, 240))
-
-        # Grain
-        poster = add_film_grain(poster, intensity=0.10)
-        return poster
-
-
-class MaximalistRenderer(PosterRenderer):
-    """
-    Pop / Maximalist Style:
-    - Vibrant saturated palette: canary yellow (#FFD600), hot magenta (#FF2A85), cyan (#00E5FF)
-    - Playful chunky typography, stickers, decorative geometric circles and organic shapes
-    - High energy, layered celebratory composition
-    """
-    def render(self):
-        W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (255, 214, 0))  # Vivid Yellow
-        draw = ImageDraw.Draw(poster)
-        
-        # Colorful geometric background layers
-        draw.polygon([(0, 0), (W, 0), (W, 400), (0, 650)], fill=(255, 42, 133))  # Magenta angle
-        draw.ellipse([W - 350, 200, W + 250, 800], fill=(0, 229, 255))  # Cyan circle
-
-        margin = 55
-        
-        # Floating Pop Stickers
-        # Sticker 1 (Top Left)
-        draw.rounded_rectangle([margin, 40, margin + 280, 100], radius=15, fill=(0, 0, 0))
-        draw.text((margin + 25, 55), "★ MAXIMUM REACTION ★", font=FONTS["display_condensed"](24), fill=(255, 214, 0))
-        
-        # Giant Headline with 3D drop shadow
-        f_title = FONTS["display_heavy"](145)
-        text = self.label
-        # Black 3D extrusion
-        for offset in range(12, 0, -2):
-            draw.text((margin + offset, 115 + offset), text, font=f_title, fill=(0, 0, 0))
-        draw.text((margin, 115), text, font=f_title, fill=(255, 255, 255))
-        
-        # Sub badge
-        draw.rounded_rectangle([margin, 290, margin + 380, 350], radius=12, fill=(0, 229, 255))
-        draw.text((margin + 20, 305), f"HAPPINESS ENERGY // {self.score}% CONFIRMED",
-                  font=FONTS["display_condensed"](26), fill=(0, 0, 0))
-
-        # Face Presentation: Framed with heavy border and colorful sticker frame
-        face_w, face_h = 720, 720
-        face_x = (W - face_w) // 2
-        face_y = 380
-        
-        # Drop shadow for face box
-        draw.rectangle([face_x + 16, face_y + 16, face_x + face_w + 16, face_y + face_h + 16], fill=(0, 0, 0))
-        
         if self.face_img:
             f_proc = ImageEnhance.Color(self.face_img).enhance(1.6)
             f_proc = ImageEnhance.Contrast(f_proc).enhance(1.2)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            poster.paste(f_proc, (face_x, face_y))
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            poster.paste(f_proc, (fx, fy))
         else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(255, 255, 255))
-            
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(0, 0, 0), width=6)
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(255, 255, 255))
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(0, 0, 0), width=8)
 
-        # Decorative Corner Stickers
-        draw.ellipse([face_x - 30, face_y - 30, face_x + 70, face_y + 70], fill=(255, 42, 133))
-        draw.text((face_x - 5, face_y - 5), "JOY", font=FONTS["display_condensed"](30), fill=(255, 255, 255))
+        # Floating Stickers
+        draw_comic_starburst(draw, fx - 20, fy + 40, num_points=10, r_inner=45, r_outer=95, fill=(0, 229, 255), outline=(0, 0, 0))
+        draw.text((fx - 70, fy + 20), "100%", font=FONTS["impact"](44), fill=(0, 0, 0))
 
-        draw.rounded_rectangle([face_x + face_w - 120, face_y + face_h - 40, face_x + face_w + 40, face_y + face_h + 30],
-                               radius=10, fill=(0, 229, 255))
-        draw.text((face_x + face_w - 95, face_y + face_h - 25), "SMILE :)", font=FONTS["display_condensed"](24), fill=(0, 0, 0))
+        draw_comic_starburst(draw, fx + fw + 20, fy + 120, num_points=12, r_inner=50, r_outer=100, fill=(255, 42, 133), outline=(0, 0, 0))
+        draw.text((fx + fw - 35, fy + 95), "VIBES", font=FONTS["impact"](38), fill=(255, 255, 255))
 
-        # Bottom Pop Information Band
-        bot_y = face_y + face_h + 40
-        draw.rectangle([margin, bot_y, W - margin, bot_y + 160], fill=(0, 0, 0))
-        
-        draw.text((margin + 30, bot_y + 25), f"DESIGN CODE: {self.design_id}", font=FONTS["mono"](20), fill=(255, 214, 0))
-        draw.text((margin + 30, bot_y + 65), "MAXIMALIST POP EXPLOSION // HIGH SATURATION REACTION ENGINE",
-                  font=FONTS["display_condensed"](26), fill=(255, 255, 255))
-        draw.text((margin + 30, bot_y + 110), f"TIMESTAMP: {self.timestamp} // ALL REALITY OPTIMIZED",
-                  font=FONTS["mono"](14), fill=(0, 229, 255))
-        
-        draw_barcode(draw, W - margin - 220, bot_y + 35, width=190, height=80, fill=(255, 255, 255))
+        # Bottom Meme Punchline
+        draw.rectangle([50, 1070, W - 50, 1280], fill=(255, 255, 255))
+        draw.rectangle([50, 1070, W - 50, 1280], outline=(0, 0, 0), width=6)
+        draw.text((80, 1095), "IMMACULATE SEROTONIN DETECTED", font=FONTS["impact"](68), fill=(0, 0, 0))
+        draw.text((80, 1185), f"REACTION LEVEL: {self.confidence}% // ALL SYSTEMS PURE JOY", font=FONTS["sans_bold"](32), fill=(255, 42, 133))
 
         return poster
 
 
-class MinimalistRenderer(PosterRenderer):
-    """
-    Hyper Minimalist Style:
-    - Extreme visual restraint, quiet charcoal and porcelain white
-    - Abundant whitespace, microscopic technical typography, delicate hairline crosshairs
-    """
+class SadMemeRenderer(BaseMemeRenderer):
+    """Dramatic, over-the-top melancholic meme with rain streaks, cold blues, and dramatic type."""
     def render(self):
         W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (248, 248, 247))
+        poster = Image.new("RGB", (W, H), (15, 23, 42))
         draw = ImageDraw.Draw(poster)
-        
-        margin = 80
-        
-        # Razor thin frame
-        draw.rectangle([margin, margin, W - margin, H - margin], outline=(220, 220, 220), width=1)
-        
-        # Alignment crosshairs at corners
-        draw_crosshair(draw, margin, margin, 12, fill=(180, 180, 180))
-        draw_crosshair(draw, W - margin, margin, 12, fill=(180, 180, 180))
-        draw_crosshair(draw, margin, H - margin, 12, fill=(180, 180, 180))
-        draw_crosshair(draw, W - margin, H - margin, 12, fill=(180, 180, 180))
 
-        # Understated header
-        draw.text((margin + 30, margin + 30), "REACTIONARY — FORMAL STUDY", font=FONTS["mono"](13), fill=(120, 120, 120))
-        draw.text((W - margin - 150, margin + 30), self.design_id, font=FONTS["mono"](13), fill=(120, 120, 120))
+        # Dramatic rain streaks
+        for rx in range(30, W, 45):
+            draw.line([rx, 0, rx - 35, H], fill=(30, 41, 59), width=2)
 
-        # Subtle Single Headline
-        draw.text((margin + 30, margin + 140), self.label.lower(), font=FONTS["body_sans"](72), fill=(30, 30, 30))
-        draw.text((margin + 30, margin + 230), f"measured state // confidence ratio {self.score / 100:.2f}",
-                  font=FONTS["mono"](14), fill=(140, 140, 140))
+        # Header
+        draw.text((60, 50), "EMOTIONAL DAMAGE ARCHIVE // VOL. 404", font=FONTS["mono_bold"](22), fill=(56, 189, 248))
+        f_title = FONTS["serif_bold"](86)
+        draw.text((60, 95), "It’s Fine. Everything Is Fine.", font=f_title, fill=(241, 245, 249))
 
-        # Precision Centered Portrait
-        face_w = 620
-        face_h = 760
-        face_x = (W - face_w) // 2
-        face_y = margin + 320
-        
+        # Face Display with Moody Vignette & Deep Blue Duotone
+        fw, fh = 820, 820
+        fx, fy = (W - fw) // 2, 230
+
         if self.face_img:
             f_proc = ImageOps.grayscale(self.face_img)
-            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.1)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            poster.paste(f_proc.convert("RGB"), (face_x, face_y))
+            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.4)
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            # Cold deep blue duotone
+            f_proc = duotone_filter(f_proc, (15, 23, 42), (147, 197, 253))
+            poster.paste(f_proc, (fx, fy))
         else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(230, 230, 230))
-            
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(200, 200, 200), width=1)
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(30, 41, 59))
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(56, 189, 248), width=3)
 
-        # Quiet Micro-Typography
-        bot_y = H - margin - 80
-        draw.line([margin + 30, bot_y - 20, W - margin - 30, bot_y - 20], fill=(230, 230, 230), width=1)
-        draw.text((margin + 30, bot_y), "01. ESSENCE", font=FONTS["mono"](12), fill=(100, 100, 100))
-        draw.text((margin + 240, bot_y), "02. EQUILIBRIUM", font=FONTS["mono"](12), fill=(100, 100, 100))
-        draw.text((margin + 480, bot_y), "03. RESTRAINT", font=FONTS["mono"](12), fill=(100, 100, 100))
-        draw.text((W - margin - 180, bot_y), self.timestamp, font=FONTS["mono"](12), fill=(120, 120, 120))
-        
+        # Big Dramatic Teardrop Sticker
+        draw.rounded_rectangle([fx + 30, fy + 30, fx + 260, fy + 90], radius=12, fill=(15, 23, 42))
+        draw.rectangle([fx + 30, fy + 30, fx + 260, fy + 90], outline=(56, 189, 248), width=2)
+        draw.text((fx + 50, fy + 45), f"SADNESS: {self.confidence}%", font=FONTS["mono_bold"](24), fill=(56, 189, 248))
+
+        # Bottom Caption Block
+        draw.rectangle([60, 1100, W - 60, 1270], fill=(30, 41, 59))
+        draw.rectangle([60, 1100, W - 60, 1270], outline=(100, 116, 139), width=2)
+        draw.text((90, 1125), "WHEN YOU DROP THE PRODUCTION DATABASE ON A FRIDAY", font=FONTS["impact"](46), fill=(255, 255, 255))
+        draw.text((90, 1195), "“I have made a severe and continuous lapse in judgement.”", font=FONTS["serif"](28), fill=(148, 163, 184))
+
+        poster = add_film_grain(poster, intensity=0.12)
         return poster
 
 
-class CyberpunkRenderer(PosterRenderer):
-    """
-    Cyberpunk Telemetry Style:
-    - Pitch darkness, neon cyan (#00FFCC) and magenta (#FF0055)
-    - Digital scanline raster, HUD bounding boxes, coordinates and kanji accents
-    """
+class AngryMemeRenderer(BaseMemeRenderer):
+    """Rage, aggressive, chaotic meme with brutalist red, neon-lime, hazard blocks, and heavy type."""
     def render(self):
         W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (6, 8, 14))
+        poster = Image.new("RGB", (W, H), (14, 14, 16))
         draw = ImageDraw.Draw(poster)
-        
-        # Subtle horizontal scanlines
-        for sy in range(0, H, 4):
-            draw.line([0, sy, W, sy], fill=(10, 14, 24), width=1)
-            
-        margin = 45
-        
-        # Cyberpunk Tech HUD Header
-        draw.text((margin, 35), "NEO-METROPOLIS BIO-SENSING TERMINAL // REV 4.2", font=FONTS["mono"](14), fill=(0, 255, 204))
-        draw.text((W - margin - 180, 35), "STATUS: LOCKED", font=FONTS["mono"](14), fill=(255, 0, 85))
-        draw.line([margin, 60, W - margin, 60], fill=(0, 255, 204), width=1)
 
-        # Huge Glitched Headline
-        f_title = FONTS["display_heavy"](135)
-        # Red/Blue offset glitch
-        draw.text((margin + 6, 88), self.label, font=f_title, fill=(255, 0, 85))
-        draw.text((margin - 6, 82), self.label, font=f_title, fill=(0, 255, 204))
-        draw.text((margin, 85), self.label, font=f_title, fill=(255, 255, 255))
-        
-        # Japanese Tech glyphs + metadata
-        draw.text((margin, 230), f"感情感知 // EMOTIONAL SCAN ID: {self.design_id} // LOC: 35.6762° N",
-                  font=FONTS["mono"](16), fill=(0, 255, 204))
+        # Top Hazard Stripes
+        stripe_w = 26
+        for sx in range(0, W, stripe_w * 2):
+            draw.polygon([(sx, 0), (sx + stripe_w, 0), (sx + stripe_w - 20, 30), (sx - 20, 30)], fill=(255, 23, 68))
+            draw.polygon([(sx + stripe_w, 0), (sx + stripe_w * 2, 0), (sx + stripe_w * 2 - 20, 30), (sx + stripe_w - 20, 30)], fill=(0, 0, 0))
 
-        # Face Display: Cyan/Magenta Split Duotone with scanlines
-        face_w, face_h = 780, 720
-        face_x = (W - face_w) // 2
-        face_y = 290
-        
+        # Massive Header
+        draw.rectangle([50, 50, W - 50, 120], fill=(255, 23, 68))
+        draw.text((70, 62), "WARNING // CRITICAL RAGE OVERFLOW", font=FONTS["mono_bold"](26), fill=(0, 0, 0))
+
+        f_huge = FONTS["impact"](110)
+        draw.text((50, 135), "PEACE WAS NEVER AN OPTION", font=f_huge, fill=(255, 255, 255))
+
+        # Face Display with High-Contrast Red & Acid Lime Duotone
+        fw, fh = 820, 780
+        fx, fy = (W - fw) // 2, 275
+
+        if self.face_img:
+            f_proc = ImageOps.grayscale(self.face_img)
+            f_proc = ImageEnhance.Contrast(f_proc).enhance(2.3)
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            f_proc = duotone_filter(f_proc, (20, 0, 10), (255, 23, 68))
+            poster.paste(f_proc, (fx, fy))
+        else:
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(30, 10, 15))
+
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(204, 255, 0), width=6)
+
+        # Corner Rage Stamps
+        draw.rectangle([fx - 15, fy + 50, fx + 160, fy + 115], fill=(204, 255, 0))
+        draw.text((fx - 5, fy + 65), "ANGRY!", font=FONTS["impact"](42), fill=(0, 0, 0))
+
+        # Bottom Punchline
+        draw.rectangle([50, 1100, W - 50, 1270], fill=(204, 255, 0))
+        draw.text((75, 1120), "ABSOLUTELY CRASHING OUT", font=FONTS["impact"](76), fill=(0, 0, 0))
+        draw.text((75, 1205), f"TENSION FACTOR: {self.confidence}% // STAND BACK 100 METERS", font=FONTS["mono_bold"](26), fill=(255, 23, 68))
+
+        poster = add_film_grain(poster, intensity=0.15)
+        return poster
+
+
+class SurprisedMemeRenderer(BaseMemeRenderer):
+    """Shocked, unexpected pop-art explosion with comic speed lines, cyan/pink gradient, and big text."""
+    def render(self):
+        W, H = POSTER_WIDTH, POSTER_HEIGHT
+        poster = Image.new("RGB", (W, H), (11, 15, 30))
+        draw = ImageDraw.Draw(poster)
+
+        # Comic Speed Lines radiating from center
+        cx, cy = W // 2, 600
+        for i in range(0, 360, 6):
+            rad = math.radians(i)
+            px = cx + 1200 * math.cos(rad)
+            py = cy + 1200 * math.sin(rad)
+            draw.line([cx, cy, px, py], fill=(25, 35, 70), width=2)
+
+        # Header Pill
+        draw.rounded_rectangle([50, 45, 450, 105], radius=30, fill=(0, 240, 255))
+        draw.text((80, 60), "LIVE REACTION: UNPRECEDENTED", font=FONTS["impact"](30), fill=(0, 0, 0))
+
+        f_huge = FONTS["impact"](125)
+        draw_text_with_outline(draw, (50, 115), "WAIT... WHAT?!", f_huge, (255, 255, 255), (255, 0, 122), outline_width=6)
+
+        # Face Display with Chromatic Aberration & Pop Glitch
+        fw, fh = 800, 780
+        fx, fy = (W - fw) // 2, 275
+
+        if self.face_img:
+            f_proc = ImageOps.fit(self.face_img, (fw, fh), method=Image.Resampling.LANCZOS)
+            f_proc = chromatic_aberration(f_proc, offset=9)
+            poster.paste(f_proc, (fx, fy))
+        else:
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(30, 40, 60))
+
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(0, 240, 255), width=5)
+
+        # Speech Bubble
+        draw_speech_bubble(draw, fx + fw - 280, fy + 40, fx + fw + 30, fy + 180, (fx + fw - 70, fy + 220), fill=(255, 0, 122), outline=(255, 255, 255), width=3)
+        draw.text((fx + fw - 250, fy + 80), "BRUH NO WAY", font=FONTS["impact"](38), fill=(255, 255, 255))
+
+        # Bottom Meme Punchline
+        draw.rectangle([50, 1100, W - 50, 1270], fill=(0, 240, 255))
+        draw.text((75, 1125), "REALITY.EXE HAS UNEXPECTEDLY STOPPED", font=FONTS["impact"](54), fill=(0, 0, 0))
+        draw.text((75, 1205), f"SHOCK INDEX: {self.confidence}% // ALL CALCULATIONS SHATTERED", font=FONTS["mono_bold"](26), fill=(255, 0, 122))
+
+        return poster
+
+
+class FearMemeRenderer(BaseMemeRenderer):
+    """Scared, panic meme with horror vignette, caution tape, and trembling text."""
+    def render(self):
+        W, H = POSTER_WIDTH, POSTER_HEIGHT
+        poster = Image.new("RGB", (W, H), (10, 14, 20))
+        draw = ImageDraw.Draw(poster)
+
+        # Caution Tape Stripes Top & Bottom
+        draw.rectangle([0, 40, W, 85], fill=(234, 179, 8))
+        for x in range(0, W, 50):
+            draw.polygon([(x, 40), (x + 25, 40), (x + 5, 85), (x - 20, 85)], fill=(0, 0, 0))
+
+        f_huge = FONTS["impact"](110)
+        draw.text((50, 100), "PANIK MODE ACTIVATED", font=f_huge, fill=(239, 68, 68))
+
+        # Face Display with Eerie Green Noir Lighting
+        fw, fh = 800, 780
+        fx, fy = (W - fw) // 2, 245
+
+        if self.face_img:
+            f_proc = ImageOps.grayscale(self.face_img)
+            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.8)
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            f_proc = duotone_filter(f_proc, (10, 20, 15), (74, 222, 128))
+            poster.paste(f_proc, (fx, fy))
+        else:
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(15, 25, 20))
+
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(239, 68, 68), width=5)
+
+        # Distress Box
+        draw.rounded_rectangle([fx + 30, fy + 30, fx + 280, fy + 95], radius=10, fill=(239, 68, 68))
+        draw.text((fx + 50, fy + 45), "THREAT DETECTED", font=FONTS["impact"](34), fill=(255, 255, 255))
+
+        # Bottom Meme Punchline
+        draw.rectangle([50, 1080, W - 50, 1270], fill=(239, 68, 68))
+        draw.text((75, 1105), "MOM PLEASE COME PICK ME UP I'M SCARED", font=FONTS["impact"](54), fill=(255, 255, 255))
+        draw.text((75, 1185), f"FEAR QUOTIENT: {self.confidence}% // SURVIVAL CHANCE: 12%", font=FONTS["mono_bold"](26), fill=(0, 0, 0))
+
+        poster = add_film_grain(poster, intensity=0.16)
+        return poster
+
+
+class DisgustMemeRenderer(BaseMemeRenderer):
+    """Disgusted reaction meme with toxic slime green/purple accents and rejection stamps."""
+    def render(self):
+        W, H = POSTER_WIDTH, POSTER_HEIGHT
+        poster = Image.new("RGB", (W, H), (18, 24, 18))
+        draw = ImageDraw.Draw(poster)
+
+        # Top Slime Banner
+        draw.rectangle([50, 45, W - 50, 125], fill=(34, 197, 94))
+        draw.text((70, 60), "BIOHAZARD // INSTANT RECOIL", font=FONTS["mono_bold"](28), fill=(0, 0, 0))
+
+        f_huge = FONTS["impact"](92)
+        draw.text((50, 140), "EW BROTHER EW... WHAT'S THAT?!", font=f_huge, fill=(240, 253, 244))
+
+        # Face Display with Toxic Green Glow Frame
+        fw, fh = 800, 780
+        fx, fy = (W - fw) // 2, 265
+
         if self.face_img:
             f_proc = ImageOps.grayscale(self.face_img)
             f_proc = ImageEnhance.Contrast(f_proc).enhance(1.6)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            # Cyber duotone (dark purple to cyan)
-            f_proc = duotone_filter(f_proc, (25, 5, 45), (0, 255, 204))
-            poster.paste(f_proc, (face_x, face_y))
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            f_proc = duotone_filter(f_proc, (18, 24, 18), (134, 239, 172))
+            poster.paste(f_proc, (fx, fy))
         else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(20, 20, 35))
-            
-        # HUD Reticle overlays over face
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(0, 255, 204), width=2)
-        # Crosshair in center of face
-        draw_crosshair(draw, face_x + face_w // 2, face_y + face_h // 2, size=32, fill=(255, 0, 85))
-        
-        # HUD Corner accents
-        cw = 50
-        draw.line([face_x, face_y + 30, face_x + 30, face_y], fill=(255, 0, 85), width=3)
-        draw.line([face_x + face_w - 30, face_y + face_h, face_x + face_w, face_y + face_h - 30], fill=(255, 0, 85), width=3)
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(30, 40, 30))
 
-        # Telemetry Gauges Below
-        hud_y = face_y + face_h + 30
-        draw.rectangle([margin, hud_y, margin + 320, hud_y + 110], outline=(0, 255, 204), width=1)
-        draw.text((margin + 20, hud_y + 16), "NEURAL FLUX DENSITY", font=FONTS["mono"](12), fill=(180, 180, 180))
-        draw.text((margin + 20, hud_y + 40), f"{self.score}%", font=FONTS["display_heavy"](48), fill=(0, 255, 204))
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(168, 85, 247), width=6)
 
-        draw.rectangle([margin + 340, hud_y, W - margin, hud_y + 110], outline=(255, 0, 85), width=1)
-        draw.text((margin + 360, hud_y + 16), "TARGET TELEMETRY // BIO-LOCK ENGAGED", font=FONTS["mono"](13), fill=(255, 0, 85))
-        draw.text((margin + 360, hud_y + 45), f"MATCH CONFIDENCE: {self.score}% // LATENCY: 12ms", font=FONTS["mono"](15), fill=(255, 255, 255))
-        draw.text((margin + 360, hud_y + 75), f"SYS ID: {self.design_id} // TIMESTAMP: {self.timestamp}", font=FONTS["mono"](13), fill=(0, 255, 204))
+        # Big "CERTIFIED NASTY" Stamp
+        draw.rounded_rectangle([fx + fw - 280, fy + 40, fx + fw + 20, fy + 120], radius=15, fill=(168, 85, 247))
+        draw.text((fx + fw - 260, fy + 55), "CERTIFIED NASTY", font=FONTS["impact"](38), fill=(255, 255, 255))
 
-        # Bottom Barcode & Cyber coordinates
-        draw_barcode(draw, margin, H - 70, width=280, height=35, fill=(0, 255, 204))
-        draw.text((margin + 310, H - 55), "CYBER-ORGANIC VISION ARCHIVE // 2077 ED.", font=FONTS["mono"](14), fill=(120, 140, 160))
+        # Bottom Punchline
+        draw.rectangle([50, 1090, W - 50, 1270], fill=(34, 197, 94))
+        draw.text((75, 1115), "ABSOLUTELY REJECTED BY ALL SENSES", font=FONTS["impact"](62), fill=(0, 0, 0))
+        draw.text((75, 1195), f"DISGUST LEVEL: {self.confidence}% // CANNOT UNSEE THIS", font=FONTS["mono_bold"](26), fill=(168, 85, 247))
 
+        poster = add_film_grain(poster, intensity=0.12)
         return poster
 
 
-class RetroRenderer(PosterRenderer):
-    """
-    Retro Risograph / Acid Print Style:
-    - 2-color riso print separation with authentic misregistration
-    - Coarse halftone texture, warm vintage palette (mustard #F5A623, teal #008080, terracotta #D9534F)
-    - 70s-80s editorial typography and badge ornaments
-    """
+class NeutralMemeRenderer(BaseMemeRenderer):
+    """Deadpan, unimpressed meme with Swiss minimal layout, loading spinner, and flat stare caption."""
     def render(self):
         W, H = POSTER_WIDTH, POSTER_HEIGHT
-        # Cream paper background
-        poster = Image.new("RGB", (W, H), (244, 240, 228))
+        poster = Image.new("RGB", (W, H), (244, 244, 245))
         draw = ImageDraw.Draw(poster)
-        
-        margin = 60
-        
-        # Heavy terracotta border
-        draw.rectangle([margin, margin, W - margin, H - margin], outline=(217, 83, 79), width=4)
-        draw.rectangle([margin + 10, margin + 10, W - margin - 10, H - margin - 10], outline=(0, 128, 128), width=2)
 
-        # Header Badge
-        draw.text((margin + 30, margin + 25), "★ RISOGRAPH PRINT ARCHIVE ★", font=FONTS["mono"](16), fill=(0, 128, 128))
-        draw.text((W - margin - 200, margin + 25), "VOL. 78 // NO. 4", font=FONTS["mono"](16), fill=(217, 83, 79))
-
-        # Retro Display Title with Misregistration Offset
-        f_title = FONTS["display_condensed"](130)
-        # Offset teal shadow
-        draw.text((margin + 34, margin + 74), self.label, font=f_title, fill=(0, 128, 128))
-        # Main terracotta layer
-        draw.text((margin + 28, margin + 70), self.label, font=f_title, fill=(217, 83, 79))
-
-        # Face Treatment: Risograph 2-Color Halftone
-        face_w, face_h = 720, 700
-        face_x = (W - face_w) // 2
-        face_y = margin + 240
-        
-        if self.face_img:
-            f_proc = ImageOps.grayscale(self.face_img)
-            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.8)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            # Riso duotone: deep teal and terracotta
-            riso = duotone_filter(f_proc, (0, 70, 70), (245, 166, 35))
-            poster.paste(riso, (face_x, face_y))
-        else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(200, 200, 180))
-            
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(217, 83, 79), width=3)
-
-        # Vintage Circular Badge
-        badge_r = 85
-        bx, by = face_x + face_w - 40, face_y + face_h - 40
-        draw.ellipse([bx - badge_r, by - badge_r, bx + badge_r, by + badge_r], fill=(245, 166, 35))
-        draw.ellipse([bx - badge_r + 5, by - badge_r + 5, bx + badge_r - 5, by + badge_r - 5], outline=(217, 83, 79), width=2)
-        draw.text((bx - 55, by - 40), f"{self.score}%", font=FONTS["display_condensed"](42), fill=(0, 0, 0))
-        draw.text((bx - 50, by + 10), "GENUINE", font=FONTS["mono"](14), fill=(217, 83, 79))
-        draw.text((bx - 52, by + 28), "REACTION", font=FONTS["mono"](12), fill=(0, 0, 0))
-
-        # Bottom Editorial Information
-        bot_y = face_y + face_h + 50
-        draw.text((margin + 30, bot_y), f"PLATE SPECIFICATION: {self.design_id}", font=FONTS["mono"](18), fill=(0, 128, 128))
-        draw.text((margin + 30, bot_y + 35), "PRINTED VIA DUAL-DRUM ROTARY STENCIL DUPLICATOR",
-                  font=FONTS["body_sans"](20), fill=(217, 83, 79))
-        draw.text((margin + 30, bot_y + 70), f"RECORDED AT {self.timestamp} ON ACID-FREE RAG PAPER",
-                  font=FONTS["mono"](14), fill=(100, 100, 100))
-
-        # Add coarse film grain
-        poster = add_film_grain(poster, intensity=0.14)
-        return poster
-
-
-class DesiMaximalismRenderer(PosterRenderer):
-    """
-    Desi Maximalism Style:
-    - Rich marigold orange (#FF9933), royal peacock indigo (#131E3A), and ruby crimson (#C8102E)
-    - Intricate ornamental corner borders, vibrant framed headers
-    - Truck-art inspired typography, celebratory decorative accents
-    """
-    def render(self):
-        W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (19, 30, 58))  # Royal Peacock Indigo
-        draw = ImageDraw.Draw(poster)
-        
-        margin = 55
-        
-        # Multi-tiered decorative border
-        draw.rectangle([margin, margin, W - margin, H - margin], outline=(255, 153, 51), width=5)
-        draw.rectangle([margin + 12, margin + 12, W - margin - 12, H - margin - 12], outline=(200, 16, 46), width=3)
-        draw.rectangle([margin + 20, margin + 20, W - margin - 20, H - margin - 20], outline=(255, 215, 0), width=1)
-
-        # Ornate Corner Flourishes
-        for cx, cy in [(margin + 20, margin + 20), (W - margin - 20, margin + 20),
-                       (margin + 20, H - margin - 20), (W - margin - 20, H - margin - 20)]:
-            draw.ellipse([cx - 18, cy - 18, cx + 18, cy + 18], fill=(255, 153, 51))
-            draw.ellipse([cx - 8, cy - 8, cx + 8, cy + 8], fill=(200, 16, 46))
-
-        # Grand Header Banner
-        banner_y = margin + 35
-        draw.rectangle([margin + 30, banner_y, W - margin - 30, banner_y + 75], fill=(200, 16, 46))
-        draw.text((margin + 50, banner_y + 20), "शुभ विचार // REACTIONARY DESI MAXIMA",
-                  font=FONTS["display_condensed"](32), fill=(255, 215, 0))
-        draw.text((W - margin - 220, banner_y + 24), self.design_id, font=FONTS["mono"](20), fill=(255, 255, 255))
-
-        # Main Majestic Headline
-        f_head = FONTS["display_heavy"](135)
-        # Gold drop shadow
-        draw.text((margin + 35, banner_y + 85), self.label, font=f_head, fill=(255, 153, 51))
-        draw.text((margin + 30, banner_y + 80), self.label, font=f_head, fill=(255, 255, 255))
-
-        # Portrait with Ornate Frame
-        face_w, face_h = 720, 700
-        face_x = (W - face_w) // 2
-        face_y = banner_y + 250
-        
-        if self.face_img:
-            f_proc = ImageEnhance.Color(self.face_img).enhance(1.7)
-            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.2)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            poster.paste(f_proc, (face_x, face_y))
-        else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(40, 50, 80))
-            
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(255, 215, 0), width=6)
-        draw.rectangle([face_x - 8, face_y - 8, face_x + face_w + 8, face_y + face_h + 8], outline=(200, 16, 46), width=3)
-
-        # Bottom Festive Information Pill
-        bot_y = face_y + face_h + 40
-        draw.rounded_rectangle([margin + 30, bot_y, W - margin - 30, bot_y + 110], radius=20, fill=(255, 153, 51))
-        draw.text((margin + 60, bot_y + 18), f"REACTION INTENSITY: {self.score}% // TOTAL JOY",
-                  font=FONTS["display_condensed"](34), fill=(19, 30, 58))
-        draw.text((margin + 60, bot_y + 65), f"DECORATIVE CELEBRATION SPEC // {self.timestamp}",
-                  font=FONTS["mono"](16), fill=(200, 16, 46))
-
-        return poster
-
-
-class ExperimentalRenderer(PosterRenderer):
-    """
-    Dramatic Experimental Style (Sadness / Overwhelmed):
-    - Dark moody atmospheric palette, fractured grid, kinetic typography slices
-    - High-contrast dramatic face treatment, layered text masks, deep grain
-    """
-    def render(self):
-        W, H = POSTER_WIDTH, POSTER_HEIGHT
-        poster = Image.new("RGB", (W, H), (13, 13, 17))
-        draw = ImageDraw.Draw(poster)
-        
-        margin = 55
-        
-        # Asymmetrical diagonal guides
-        draw.line([margin, 300, W - margin, 180], fill=(45, 45, 55), width=1)
-        draw.line([margin, 950, W - margin, 1100], fill=(45, 45, 55), width=1)
+        # Subtle Grid Lines
+        for gx in range(50, W, 100):
+            draw.line([gx, 50, gx, H - 50], fill=(228, 228, 231), width=1)
 
         # Header
-        draw.text((margin, 50), "EXPERIMENTAL POSTER LABORATORY", font=FONTS["mono"](14), fill=(140, 140, 160))
-        draw.text((W - margin - 180, 50), self.design_id, font=FONTS["mono"](14), fill=(121, 40, 202))
+        draw.text((60, 50), "ISO 404 / EMOTIONLESS TEST BENCH", font=FONTS["mono"](18), fill=(113, 113, 122))
+        f_title = FONTS["sans_bold"](100)
+        draw.text((60, 85), "COMPLETELY UNBOTHERED.", font=f_title, fill=(24, 24, 27))
 
-        # Massive Sliced & Layered Headline
-        f_title = FONTS["display_condensed"](165)
-        # Background ghostly offset
-        draw.text((margin - 20, 110), self.label, font=f_title, fill=(28, 28, 38))
-        draw.text((margin, 125), self.label, font=f_title, fill=(240, 240, 245))
+        # Face Display: Crisp High-Contrast Black & White
+        fw, fh = 800, 780
+        fx, fy = (W - fw) // 2, 230
 
-        # Dramatic Face Treatment: Deep shadowy B&W with high grain and crop
-        face_w, face_h = 760, 760
-        face_x = (W - face_w) // 2
-        face_y = 310
-        
         if self.face_img:
             f_proc = ImageOps.grayscale(self.face_img)
-            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.8)
-            f_proc = ImageOps.fit(f_proc, (face_w, face_h), method=Image.Resampling.LANCZOS)
-            # Moody violet duotone (obsidian to muted indigo)
-            f_proc = duotone_filter(f_proc, (13, 13, 17), (180, 185, 215))
-            poster.paste(f_proc, (face_x, face_y))
+            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.3)
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            poster.paste(f_proc.convert("RGB"), (fx, fy))
         else:
-            draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], fill=(25, 25, 32))
-            
-        # Experimental framing (offset floating rectangles)
-        draw.rectangle([face_x, face_y, face_x + face_w, face_y + face_h], outline=(121, 40, 202), width=2)
-        draw.rectangle([face_x + 25, face_y - 25, face_x + face_w + 25, face_y + face_h - 25], outline=(255, 255, 255), width=1)
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(220, 220, 220))
 
-        # Overlay vertical typography on face edge
-        draw.text((face_x + 15, face_y + 30), "OVERWHELMED STATE ARCHITECTURE", font=FONTS["mono"](14), fill=(255, 255, 255))
-        draw.text((face_x + 15, face_y + 60), f"SCORE: {self.score}% // INTERNAL PRESSURE", font=FONTS["mono"](14), fill=(121, 40, 202))
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(24, 24, 27), width=3)
 
-        # Bottom Abstract Grid Metadata
-        bot_y = face_y + face_h + 40
-        draw.text((margin, bot_y), "01 / DISSOLUTION OF FORM", font=FONTS["mono"](14), fill=(180, 180, 190))
-        draw.text((margin, bot_y + 30), "WHEN PERCEPTION SURPASSES PROCESSING CAPACITY, THE INTERFACE FRACTURES.",
-                  font=FONTS["display_serif"](24), fill=(220, 220, 230))
-        draw.text((margin, bot_y + 75), f"REACTIONARY RES. PROTOCOL // {self.timestamp}", font=FONTS["mono"](13), fill=(100, 100, 120))
+        # Loading Spinner Indicator
+        draw.text((fx + 30, fy + 30), "[ SYSTEM STATUS: 0% GIVEN ]", font=FONTS["mono_bold"](20), fill=(255, 59, 0))
 
-        draw_barcode(draw, W - margin - 220, bot_y + 20, width=220, height=45, fill=(240, 240, 245))
+        # Bottom Caption
+        draw.rectangle([60, 1060, W - 60, 1260], fill=(24, 24, 27))
+        draw.text((85, 1090), "LACK OF REACTION DETECTED", font=FONTS["impact"](64), fill=(255, 255, 255))
+        draw.text((85, 1180), f"NEUTRALITY SCORE: {self.confidence}% // NOT IMPRESSED IN THE SLIGHTEST", font=FONTS["mono"](24), fill=(255, 59, 0))
 
-        # Heavy Film Grain
-        poster = add_film_grain(poster, intensity=0.18)
         return poster
 
 
-# Registry of renderers
+class ConfusedMemeRenderer(BaseMemeRenderer):
+    """Confused meme with floating ??? question marks, math formulas, and chaotic layout."""
+    def render(self):
+        W, H = POSTER_WIDTH, POSTER_HEIGHT
+        poster = Image.new("RGB", (W, H), (26, 22, 43))
+        draw = ImageDraw.Draw(poster)
+
+        # Floating Math & Logic Formulas
+        formulas = ["E = mc² ???", "x = (-b ± √(b² - 4ac)) / 2a", "404 LOGIC NOT FOUND", "WHERE IS THE FLAVOR?", "∫ f(x)dx = WHY"]
+        for i, form in enumerate(formulas):
+            draw.text((60 + (i * 180) % 800, 70 + i * 40), form, font=FONTS["mono"](20), fill=(80, 70, 120))
+
+        f_huge = FONTS["impact"](110)
+        draw.text((50, 110), "WHAT IS BLUD EVEN DOING?!", font=f_huge, fill=(245, 158, 11))
+
+        # Face Display with Question Marks & Offset Shadow
+        fw, fh = 800, 780
+        fx, fy = (W - fw) // 2, 245
+        draw.rectangle([fx + 16, fy + 16, fx + fw + 16, fy + fh + 16], fill=(139, 92, 246))
+
+        if self.face_img:
+            f_proc = ImageEnhance.Color(self.face_img).enhance(1.4)
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            poster.paste(f_proc, (fx, fy))
+        else:
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(40, 35, 60))
+
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(245, 158, 11), width=5)
+
+        # Huge Floating Question Marks
+        f_q = FONTS["impact"](140)
+        draw_text_with_outline(draw, (fx - 40, fy + 20), "?", f_q, (245, 158, 11), (0, 0, 0), outline_width=5)
+        draw_text_with_outline(draw, (fx + fw - 80, fy + 80), "???", f_q, (139, 92, 246), (255, 255, 255), outline_width=4)
+
+        # Bottom Punchline
+        draw.rectangle([50, 1080, W - 50, 1270], fill=(139, 92, 246))
+        draw.text((75, 1105), "NO THOUGHTS. HEAD COMPLETELY EMPTY.", font=FONTS["impact"](58), fill=(255, 255, 255))
+        draw.text((75, 1185), f"CONFUSION COEFFICIENT: {self.confidence}% // BUFFER OVERLOAD", font=FONTS["mono_bold"](26), fill=(245, 158, 11))
+
+        return poster
+
+
+class ExcitedMemeRenderer(BaseMemeRenderer):
+    """Chaotic, energetic meme with explosive neon confetti, lightning, and maximalist typography."""
+    def render(self):
+        W, H = POSTER_WIDTH, POSTER_HEIGHT
+        poster = Image.new("RGB", (W, H), (30, 27, 75))
+        draw = ImageDraw.Draw(poster)
+
+        # Dynamic Confetti & Streaks
+        random.seed(42)
+        for _ in range(60):
+            rx, ry = random.randint(20, W - 20), random.randint(20, H - 20)
+            rw, rh = random.randint(8, 24), random.randint(8, 24)
+            color = random.choice([(244, 63, 94), (251, 191, 36), (6, 182, 212), (168, 85, 247)])
+            draw.rectangle([rx, ry, rx + rw, ry + rh], fill=color)
+
+        f_huge = FONTS["impact"](140)
+        draw_text_with_outline(draw, (50, 70), "LETS GOOOOOOOOO!", f_huge, (251, 191, 36), (244, 63, 94), outline_width=6)
+
+        # Face Display with Hyper-Saturated Pop Styling
+        fw, fh = 800, 780
+        fx, fy = (W - fw) // 2, 230
+
+        if self.face_img:
+            f_proc = ImageEnhance.Color(self.face_img).enhance(1.8)
+            f_proc = ImageEnhance.Contrast(f_proc).enhance(1.25)
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            poster.paste(f_proc, (fx, fy))
+        else:
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(40, 30, 80))
+
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(6, 182, 212), width=6)
+
+        # Starburst Stickers
+        draw_comic_starburst(draw, fx + fw - 20, fy + 80, num_points=12, r_inner=45, r_outer=95, fill=(244, 63, 94), outline=(255, 255, 255))
+        draw.text((fx + fw - 65, fy + 55), "HYPE", font=FONTS["impact"](42), fill=(255, 255, 255))
+
+        # Bottom Punchline
+        draw.rectangle([50, 1070, W - 50, 1270], fill=(244, 63, 94))
+        draw.text((75, 1095), "MAXIMUM OVERDRIVE ACHIEVED", font=FONTS["impact"](72), fill=(255, 255, 255))
+        draw.text((75, 1185), f"ENERGY LEVEL: {self.confidence}% // CANNOT BE CONTAINED", font=FONTS["mono_bold"](28), fill=(251, 191, 36))
+
+        return poster
+
+
+class EmbarrassedMemeRenderer(BaseMemeRenderer):
+    """Awkward cringe meme with anime blush cheeks, sweat drops, and cringe meter."""
+    def render(self):
+        W, H = POSTER_WIDTH, POSTER_HEIGHT
+        poster = Image.new("RGB", (W, H), (42, 24, 32))
+        draw = ImageDraw.Draw(poster)
+
+        # Header
+        draw.rounded_rectangle([50, 45, 420, 100], radius=15, fill=(251, 113, 133))
+        draw.text((75, 60), "AWKWARD MOMENT // CAUGHT IN 4K", font=FONTS["impact"](26), fill=(0, 0, 0))
+
+        f_huge = FONTS["impact"](68)
+        draw.text((50, 125), "DYING OF SECONDHAND EMBARRASSMENT", font=f_huge, fill=(255, 241, 242))
+
+        # Face Display with Soft Blush Framing
+        fw, fh = 800, 780
+        fx, fy = (W - fw) // 2, 235
+
+        if self.face_img:
+            f_proc = ImageEnhance.Color(self.face_img).enhance(1.4)
+            f_proc = ImageOps.fit(f_proc, (fw, fh), method=Image.Resampling.LANCZOS)
+            # Soft blush pink tint overlay
+            arr = np.array(f_proc).astype(np.float32)
+            arr[:, :, 0] = np.clip(arr[:, :, 0] * 1.15, 0, 255)
+            f_proc = Image.fromarray(arr.astype(np.uint8))
+            poster.paste(f_proc, (fx, fy))
+        else:
+            draw.rectangle([fx, fy, fx + fw, fy + fh], fill=(50, 30, 40))
+
+        draw.rectangle([fx, fy, fx + fw, fy + fh], outline=(251, 113, 133), width=5)
+
+        # Cringe Badge
+        draw.rounded_rectangle([fx + 30, fy + 30, fx + 260, fy + 95], radius=12, fill=(244, 114, 182))
+        draw.text((fx + 50, fy + 45), "CRINGE: 9000+", font=FONTS["impact"](36), fill=(0, 0, 0))
+
+        # Bottom Punchline
+        draw.rectangle([50, 1070, W - 50, 1270], fill=(251, 113, 133))
+        draw.text((75, 1095), "I WANT TO DISAPPEAR INTO THE FLOOR", font=FONTS["impact"](62), fill=(0, 0, 0))
+        draw.text((75, 1180), f"SECONDHAND RATING: {self.confidence}% // UNRECOVERABLE DAMAGE", font=FONTS["mono_bold"](26), fill=(255, 255, 255))
+
+        return poster
+
+
+# Registry of meme renderers
 RENDERERS = {
-    "Swiss": SwissRenderer,
-    "Brutalist": BrutalistRenderer,
-    "Y2K": Y2KRenderer,
-    "Editorial": EditorialRenderer,
-    "Maximalist": MaximalistRenderer,
-    "Minimalist": MinimalistRenderer,
-    "Cyberpunk": CyberpunkRenderer,
-    "Retro": RetroRenderer,
-    "Desi Maximalism": DesiMaximalismRenderer,
-    "Experimental": ExperimentalRenderer,
+    "HAPPY": HappyMemeRenderer,
+    "SAD": SadMemeRenderer,
+    "ANGRY": AngryMemeRenderer,
+    "SURPRISED": SurprisedMemeRenderer,
+    "FEAR": FearMemeRenderer,
+    "DISGUST": DisgustMemeRenderer,
+    "NEUTRAL": NeutralMemeRenderer,
+    "CONFUSED": ConfusedMemeRenderer,
+    "EXCITED": ExcitedMemeRenderer,
+    "EMBARRASSED": EmbarrassedMemeRenderer,
 }
 
 
-def generate_poster(frame, emotion_data, style_name="Swiss", box=None, params=None):
+# --- FINAL BRAND COMPOSITING STEP ---
+
+def composite_club_branding(poster):
     """
-    Main entry point to generate a graphic design poster.
+    Composites the Graphica club logo + "GRAPHICA" text in the bottom-right corner only.
+    No Instagram QR on the meme. Preserves exact logo proportions, works on all backgrounds.
+    """
+    W, H = poster.size
+    draw = ImageDraw.Draw(poster)
+
+    # Search for club logo
+    logo_paths = [
+        os.path.join(HERE, "assets", "club_logo.jpeg"),
+        os.path.join(HERE, "g logo.jpeg"),
+        os.path.join(HERE, "assets", "club_logo.png"),
+    ]
+    logo_file = next((p for p in logo_paths if os.path.isfile(p)), None)
+
+    badge_h = 170
+    margin_x = 55
+    margin_y = 55
+    by = H - margin_y - badge_h
+
+    if logo_file:
+        try:
+            logo_img = Image.open(logo_file).convert("RGBA")
+            lw, lh = logo_img.size
+
+            # Scale logo proportionally to fit inside badge
+            target_logo_h = 110
+            aspect = lw / lh
+            target_logo_w = int(target_logo_h * aspect)
+            logo_scaled = logo_img.resize((target_logo_w, target_logo_h), Image.Resampling.LANCZOS)
+
+            # Measure "GRAPHICA" text width to size badge correctly
+            f_name = FONTS["impact"](42)
+            try:
+                bbox = f_name.getbbox("GRAPHICA")
+                text_w = bbox[2] - bbox[0]
+            except Exception:
+                text_w = 160
+
+            padding = 18
+            gap = 14
+            badge_w = padding + target_logo_w + gap + text_w + padding
+
+            # Position at bottom-right
+            badge_x = W - margin_x - badge_w
+
+            # White card with drop shadow
+            draw.rectangle([badge_x + 5, by + 5, badge_x + badge_w + 5, by + badge_h + 5],
+                           fill=(0, 0, 0, 140))
+            draw.rounded_rectangle([badge_x, by, badge_x + badge_w, by + badge_h],
+                                   radius=14, fill=(255, 255, 255), outline=(0, 0, 0), width=3)
+
+            # Paste logo on the left side of the badge
+            logo_x = badge_x + padding
+            logo_y = by + (badge_h - target_logo_h) // 2
+            if logo_scaled.mode == "RGBA":
+                poster.paste(logo_scaled, (logo_x, logo_y), mask=logo_scaled)
+            else:
+                poster.paste(logo_scaled, (logo_x, logo_y))
+
+            # "GRAPHICA" text on the right side of the logo
+            text_x = logo_x + target_logo_w + gap
+            text_y = by + (badge_h - 42) // 2
+            draw.text((text_x, text_y), "GRAPHICA", font=f_name, fill=(0, 0, 0))
+
+        except Exception as e:
+            print(f"[BRANDING] Error loading logo: {e}")
+            # Fallback text-only badge
+            badge_w = 240
+            badge_x = W - margin_x - badge_w
+            draw.rounded_rectangle([badge_x, by, badge_x + badge_w, by + badge_h],
+                                   radius=14, fill=(255, 255, 255), outline=(0, 0, 0), width=3)
+            draw.text((badge_x + 24, by + 62), "GRAPHICA", font=FONTS["impact"](42), fill=(0, 0, 0))
+    else:
+        # No logo found — text-only fallback
+        badge_w = 240
+        badge_x = W - margin_x - badge_w
+        draw.rounded_rectangle([badge_x, by, badge_x + badge_w, by + badge_h],
+                               radius=14, fill=(255, 255, 255), outline=(0, 0, 0), width=3)
+        draw.text((badge_x + 24, by + 62), "GRAPHICA", font=FONTS["impact"](42), fill=(0, 0, 0))
+
+    return poster
+
+
+def generate_meme(frame, emotion_data, target_emotion=None, box=None, params=None):
+    """
+    Main pipeline to generate a graphic design meme.
     
     Args:
-      frame: OpenCV BGR image from webcam (or None).
-      emotion_data: Dict containing emotion, label, confidence, etc.
-      style_name: One of the 10 supported styles.
-      box: (x0, y0, x1, y1) face bounding box tuple.
-      params: Dict of optional tuning parameters (grain, contrast, etc.).
+      frame: OpenCV BGR image from webcam.
+      emotion_data: Dict with detected emotion details.
+      target_emotion: Overridden emotion if user manually selected one.
+      box: (x0, y0, x1, y1) face bounding box.
+      params: Dict of options.
       
     Returns:
-      PIL Image of the generated poster.
+      (PIL Image, metadata dict)
     """
-    style = style_name if style_name in RENDERERS else "Swiss"
-    
-    # Extract & prepare cropped face if frame is supplied
+    emotion_key = (target_emotion or emotion_data.get("emotion", "HAPPY")).upper()
+    if emotion_key not in RENDERERS:
+        emotion_key = "HAPPY"
+
     face_img = None
     if frame is not None:
         try:
-            face_img = crop_face_area(frame, box)
+            face_img = crop_face_portrait(frame, box)
         except Exception as e:
             print(f"Face crop error: {e}")
-            face_img = None
-            
-    render_data = {
-        "emotion": emotion_data.get("emotion", "NEUTRAL"),
-        "label": emotion_data.get("label", "UNIMPRESSED"),
-        "style": style,
-        "confidence": emotion_data.get("confidence", 85),
-        "design_id": f"#RX-{random.randint(100, 999)}",
-        "face_img": face_img,
-        "params": params or {},
-    }
+
+    # Initialize renderer
+    renderer_cls = RENDERERS[emotion_key]
+    renderer = renderer_cls(face_img, emotion_data, params)
     
-    renderer_cls = RENDERERS[style]
-    renderer = renderer_cls(render_data)
+    # 1. Render Meme Composition
     poster = renderer.render()
-    return poster, render_data
+    
+    # 2. Composite Final Club Branding (Logo + Instagram QR)
+    poster = composite_club_branding(poster)
+
+    meta = {
+        "emotion": emotion_key,
+        "label": renderer.label,
+        "caption": renderer.caption,
+        "confidence": renderer.confidence,
+        "design_id": renderer.design_id,
+        "timestamp": renderer.timestamp,
+        "is_override": target_emotion is not None and target_emotion.upper() != emotion_data.get("emotion", "").upper(),
+    }
+
+    return poster, meta

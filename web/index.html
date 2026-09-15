@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>REACTIONARY — Your Face. Your Emotion. Your Design.</title>
+  <!-- Google Fonts: Syne, Space Grotesk, JetBrains Mono, Playfair Display -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Playfair+Display:ital,wght@0,600;0,900;1,400&family=Space+Grotesk:wght@400;500;700&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-dark">
+  <!-- Scanline & Noise Ambient Overlays -->
+  <div class="ambient-grid"></div>
+  <div class="ambient-noise"></div>
+
+  <!-- App Wrapper -->
+  <div class="app-shell">
+
+    <!-- Top Editorial Header -->
+    <header class="app-header">
+      <div class="brand-block">
+        <div class="brand-logo">
+          <span class="logo-mark">RX</span>
+          <h1 class="logo-title">REACTIONARY</h1>
+        </div>
+        <p class="logo-tagline">“Your face. Your emotion. Your design.”</p>
+      </div>
+
+      <div class="header-metadata">
+        <div class="meta-pill status-live">
+          <span class="pulse-dot"></span>
+          <span id="camStatusText">SYSTEM ACTIVE</span>
+        </div>
+        <div class="meta-pill">
+          <span class="pill-label">ENGINE:</span>
+          <span class="pill-val">MEDIAPIPE v1.0</span>
+        </div>
+        <div class="meta-pill">
+          <span class="pill-label">LATENCY:</span>
+          <span class="pill-val" id="latencyVal">18ms</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="workspace-grid">
+      
+      <!-- LEFT PANEL: Camera Feed & Emotion Detection -->
+      <section class="panel camera-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <span class="section-tag">01 / INPUT MATRIX</span>
+            <h2 class="panel-title">FACIAL SENSING</h2>
+          </div>
+          <div class="feed-coords" id="feedCoords">X: 000 | Y: 000</div>
+        </div>
+
+        <!-- Video Frame Container with Overlays -->
+        <div class="camera-viewport" id="viewport">
+          <!-- Live MJPEG Stream -->
+          <img id="cameraStream" src="/video_feed" alt="Live Camera Stream" class="camera-feed-img" />
+
+          <!-- Loading State Animation -->
+          <div class="cam-loader" id="camLoader">
+            <div class="loader-scanner"></div>
+            <p class="loader-label">INITIALIZING OPTICAL SENSORS...</p>
+          </div>
+
+          <!-- Face Scanning Overlay & Reticle -->
+          <div class="reticle-layer" id="reticleLayer">
+            <div class="reticle-box" id="reticleBox">
+              <div class="corner-bracket tl"></div>
+              <div class="corner-bracket tr"></div>
+              <div class="corner-bracket bl"></div>
+              <div class="corner-bracket br"></div>
+              <div class="scan-line"></div>
+              <div class="reticle-label" id="reticleLabel">TRACKING_01</div>
+            </div>
+          </div>
+
+          <!-- No Face / Multiple Faces Warning Alert -->
+          <div class="viewport-alert hidden" id="viewportAlert">
+            <span class="alert-icon">⚠</span>
+            <span class="alert-text" id="alertText">NO FACE DETECTED</span>
+          </div>
+
+          <!-- Camera Controls Overlay -->
+          <div class="viewport-hud">
+            <div class="hud-item">
+              <span class="hud-label">FPS:</span>
+              <span class="hud-val" id="fpsCounter">30.0</span>
+            </div>
+            <div class="hud-item">
+              <span class="hud-label">CALIBRATED:</span>
+              <span class="hud-val" id="calibStatus">YES</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Emotion Readout & Telemetry Radar -->
+        <div class="emotion-readout-card">
+          <div class="emotion-main">
+            <div class="emotion-symbol" id="emotionSymbol">😐</div>
+            <div class="emotion-details">
+              <div class="emotion-tag">CURRENT DETECTED EMOTION</div>
+              <div class="emotion-name" id="emotionLabel">UNIMPRESSED</div>
+              <div class="emotion-desc" id="emotionDesc">Restrained, balanced, minimal expression</div>
+            </div>
+            <div class="emotion-score-badge">
+              <div class="score-val" id="confidenceVal">85%</div>
+              <div class="score-lbl">CONFIDENCE</div>
+            </div>
+          </div>
+
+          <!-- Blendshape Telemetry Bars -->
+          <div class="telemetry-deck">
+            <div class="bar-unit">
+              <div class="bar-header">
+                <span>JAW TENSION</span>
+                <span id="telJaw">0.00</span>
+              </div>
+              <div class="bar-track"><div class="bar-fill" id="fillJaw" style="width: 15%"></div></div>
+            </div>
+            <div class="bar-unit">
+              <div class="bar-header">
+                <span>BROW INTENSITY</span>
+                <span id="telBrow">0.00</span>
+              </div>
+              <div class="bar-track"><div class="bar-fill" id="fillBrow" style="width: 20%"></div></div>
+            </div>
+            <div class="bar-unit">
+              <div class="bar-header">
+                <span>SMILE / AMUSEMENT</span>
+                <span id="telSmile">0.00</span>
+              </div>
+              <div class="bar-track"><div class="bar-fill" id="fillSmile" style="width: 10%"></div></div>
+            </div>
+            <div class="bar-unit">
+              <div class="bar-header">
+                <span>SQUINT / SCRUTINY</span>
+                <span id="telSquint">0.00</span>
+              </div>
+              <div class="bar-track"><div class="bar-fill" id="fillSquint" style="width: 25%"></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- RIGHT PANEL: Design Language & Generation Controls -->
+      <section class="panel control-panel">
+        <div class="panel-header">
+          <div class="panel-title-group">
+            <span class="section-tag">02 / TRANSLATION MATRIX</span>
+            <h2 class="panel-title">DESIGN LANGUAGE</h2>
+          </div>
+          
+          <!-- Auto / Manual Mode Switcher -->
+          <div class="mode-toggle-group">
+            <button class="mode-btn active" id="modeAutoBtn" onclick="setMode('auto')">
+              <span class="mode-indicator"></span>
+              AUTO MODE
+            </button>
+            <button class="mode-btn" id="modeManualBtn" onclick="setMode('manual')">
+              <span class="mode-indicator"></span>
+              MANUAL MODE
+            </button>
+          </div>
+        </div>
+
+        <div class="mode-caption" id="modeCaption">
+          <strong>AUTO MODE ACTIVE:</strong> Design language dynamically synchronizes with detected facial reaction.
+        </div>
+
+        <!-- Design Style Selector Grid (10 Styles) -->
+        <div class="style-selector-section">
+          <div class="section-subhead">
+            <span>SELECT POSTER LANGUAGE (10 STYLES)</span>
+            <span class="style-badge-counter" id="activeStyleBadge">SWISS</span>
+          </div>
+
+          <div class="styles-grid" id="stylesGrid">
+            <!-- Rendered dynamically by app.js -->
+          </div>
+        </div>
+
+        <!-- Design Parameters Accordion -->
+        <div class="parameters-section">
+          <div class="section-subhead">DESIGN SYNTHESIS PARAMETERS</div>
+          
+          <div class="params-deck">
+            <div class="param-slider-group">
+              <div class="slider-header">
+                <label for="paramGrain">FILM GRAIN & NOISE</label>
+                <span id="paramGrainVal">MEDIUM (15%)</span>
+              </div>
+              <input type="range" id="paramGrain" min="0" max="30" value="15" class="slider-input">
+            </div>
+
+            <div class="param-slider-group">
+              <div class="slider-header">
+                <label for="paramContrast">PHOTO TREATMENT CONTRAST</label>
+                <span id="paramContrastVal">HIGH (+40%)</span>
+              </div>
+              <input type="range" id="paramContrast" min="0" max="100" value="40" class="slider-input">
+            </div>
+
+            <div class="param-slider-group">
+              <div class="slider-header">
+                <label for="paramGrid">STRUCTURAL GRID DENSITY</label>
+                <span id="paramGridVal">MODULAR 8PT</span>
+              </div>
+              <input type="range" id="paramGrid" min="1" max="5" value="3" class="slider-input">
+            </div>
+          </div>
+        </div>
+
+        <!-- Primary Action Trigger -->
+        <div class="action-footer">
+          <button class="generate-btn" id="generateBtn" onclick="generatePosterAction()">
+            <span class="btn-ambient"></span>
+            <span class="btn-text">GENERATE GRAPHIC POSTER</span>
+            <span class="btn-shortcut">SPACE / ENTER</span>
+          </button>
+        </div>
+      </section>
+
+    </main>
+
+  </div>
+
+
+  <!-- POSTER GENERATION MODAL / EXHIBITION VIEW -->
+  <div class="exhibition-modal hidden" id="exhibitionModal">
+    <div class="modal-backdrop" onclick="closeExhibition()"></div>
+    
+    <div class="modal-container">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span class="modal-tag">EXHIBITION PRINT // 1200 × 1600</span>
+          <h3 class="modal-title" id="modalTitle">REACTION POSTER #RX-042</h3>
+        </div>
+        <button class="modal-close-btn" onclick="closeExhibition()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Left: Large High-Res Poster Frame -->
+        <div class="poster-canvas-wrap">
+          <div class="poster-loader hidden" id="posterLoader">
+            <div class="poster-spinner"></div>
+            <div class="poster-loading-text">SYNTHESIZING GRAPHIC DESIGN POSTER...</div>
+            <div class="poster-loading-sub">Applying typographic hierarchy, grain texture, and photo grading</div>
+          </div>
+          <img id="posterResultImg" src="" alt="Generated Graphic Design Poster" class="poster-image" />
+        </div>
+
+        <!-- Right: Design Breakdown & Actions -->
+        <div class="poster-inspector-panel">
+          <div class="inspector-card">
+            <h4 class="card-title">DESIGN COMPOSITION METRICS</h4>
+            
+            <div class="meta-row">
+              <span class="meta-k">FACIAL REACTION:</span>
+              <span class="meta-v highlight" id="postReaction">OVERWHELMED</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-k">DESIGN LANGUAGE:</span>
+              <span class="meta-v" id="postStyle">EXPERIMENTAL EDITORIAL</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-k">REACTION SCORE:</span>
+              <span class="meta-v" id="postScore">87%</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-k">DESIGN ID:</span>
+              <span class="meta-v mono" id="postDesignId">#RX-042</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-k">TYPOGRAPHY SPEC:</span>
+              <span class="meta-v" id="postTypography">Grotesque Display + Serif</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-k">TIMESTAMP:</span>
+              <span class="meta-v mono" id="postTimestamp">2026.09.15 // 15:52</span>
+            </div>
+          </div>
+
+          <!-- Extracted Color Swatches -->
+          <div class="inspector-card">
+            <h4 class="card-title">PALETTE SYSTEM</h4>
+            <div class="swatch-cluster" id="swatchCluster">
+              <!-- Swatches inserted by app.js -->
+            </div>
+          </div>
+
+          <!-- Modal Action Buttons -->
+          <div class="modal-actions">
+            <button class="action-btn download-btn" onclick="downloadPoster()">
+              <span>↓</span> DOWNLOAD POSTER (PNG)
+            </button>
+            <button class="action-btn regen-btn" onclick="regeneratePoster()">
+              <span>↻</span> REGENERATE POSTER
+            </button>
+            <button class="action-btn secondary-btn" onclick="closeExhibition()">
+              <span>📷</span> CAPTURE NEW REACTION
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
